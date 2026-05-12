@@ -15,8 +15,9 @@
 
 ## Test Local Website
 * `source .venv/bin/activate` to activate the virtual env if it's not activated
-* `cd backend`
-  * After main.py had been implemented, `python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000` to start FastAPI server
+* After main.py had been implemented, `python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000` to start FastAPI server
+  * if something is already running om port 8000
+    * `lsof -i :8000` --> `kill <PID>`
   * Backend console will show printed results
 * `cd frontend`
   * `npx expo start --web` will start the web 🚀
