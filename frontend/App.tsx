@@ -1,8 +1,9 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
+  Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -128,68 +129,91 @@ function HighlightedText({ text, topic }: { text: string; topic: string }) {
 
 export default function App() {
   const [topic, setTopic] = useState('');
+  const [submittedTopic, setSubmittedTopic] = useState('');
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const debouncedTopic = useMemo(() => topic.trim(), [topic]);
+  const canSubmit = topic.trim().length > 0;
+
+  function submitTopic() {
+    const nextTopic = topic.trim();
+
+    if (!nextTopic) {
+      return;
+    }
+
+    setSubmittedTopic(nextTopic);
+  }
 
   useEffect(() => {
-    if (!debouncedTopic) {
+    if (!submittedTopic) {
       setDocuments([]);
       setError('');
       setIsLoading(false);
       return;
     }
 
-    const timeoutId = setTimeout(() => {
-      setIsLoading(true);
-      setError('');
+    setIsLoading(true);
+    setError('');
 
-      fetch(`${BACKEND_URL}/documents?topic=${encodeURIComponent(debouncedTopic)}`)
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error('Could not load the knowledge base.');
-          }
+    fetch(`${BACKEND_URL}/documents?topic=${encodeURIComponent(submittedTopic)}`)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Could not load the knowledge base.');
+        }
 
-          return response.json() as Promise<DocumentsResponse>;
-        })
-        .then((data) => setDocuments(data.documents))
-        .catch(() => {
-          setDocuments([]);
-          setError('Could not reach the backend at http://localhost:8000. Start FastAPI and try again.');
-        })
-        .finally(() => setIsLoading(false));
-    }, 250);
+        return response.json() as Promise<DocumentsResponse>;
+      })
+      .then((data) => setDocuments(data.documents))
+      .catch(() => {
+        setDocuments([]);
+        setError('Could not reach the backend at http://localhost:8000. Start FastAPI and try again.');
+      })
+      .finally(() => setIsLoading(false));
+  }, [submittedTopic]);
 
-    return () => clearTimeout(timeoutId);
-  }, [debouncedTopic]);
+  if (!submittedTopic) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <StatusBar style="dark" />
+        <View style={styles.startContainer}>
+          <Text style={styles.brand}>GroundLens</Text>
+          <Text style={styles.startPrompt}>Type a topic to search the knowledge base</Text>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setTopic}
+            onSubmitEditing={submitTopic}
+            placeholder="Create targeted campaigns for Facebook"
+            placeholderTextColor="#78818f"
+            returnKeyType="search"
+            style={styles.input}
+            value={topic}
+          />
+          <Pressable
+            disabled={!canSubmit}
+            onPress={submitTopic}
+            style={[styles.submitButton, !canSubmit && styles.submitButtonDisabled]}
+          >
+            <Text style={styles.submitButtonText}>Submit</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar style="dark" />
       <View style={styles.header}>
         <Text style={styles.brand}>GroundLens</Text>
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          onChangeText={setTopic}
-          placeholder="Type a topic"
-          placeholderTextColor="#78818f"
-          style={styles.input}
-          value={topic}
-        />
+        <Text style={styles.selectedTopicLabel}>Selected topic</Text>
+        <Text style={styles.selectedTopic}>{submittedTopic}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {!debouncedTopic ? (
-          <View style={styles.notice}>
-            <Text style={styles.noticeTitle}>Enter a topic</Text>
-            <Text style={styles.noticeText}>
-              The knowledge document will appear after you type a topic.
-            </Text>
-          </View>
-        ) : isLoading ? (
+        {isLoading ? (
           <View style={styles.centerState}>
             <ActivityIndicator color="#2563eb" />
             <Text style={styles.stateText}>Finding matching documents...</Text>
@@ -208,7 +232,7 @@ export default function App() {
           documents.map((document) => (
             <View key={document.id} style={styles.document}>
               <Text style={styles.documentTitle}>
-                <HighlightedText text={document.title} topic={topic} />
+                <HighlightedText text={document.title} topic={submittedTopic} />
               </Text>
 
               {formatContent(getDocumentBody(document.content)).map((block, index) => {
@@ -217,7 +241,7 @@ export default function App() {
                     key={`${document.id}-${index}`}
                     style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
                   >
-                    <HighlightedText text={block.text} topic={topic} />
+                    <HighlightedText text={block.text} topic={submittedTopic} />
                   </Text>
                 );
               })}
@@ -234,6 +258,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f6f8fb',
   },
+  startContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
   header: {
     backgroundColor: '#ffffff',
     borderBottomColor: '#dde3ec',
@@ -248,6 +277,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginBottom: 14,
   },
+  startPrompt: {
+    color: '#526071',
+    fontSize: 17,
+    lineHeight: 24,
+    marginBottom: 18,
+  },
   input: {
     backgroundColor: '#ffffff',
     borderColor: '#b7c1cf',
@@ -257,6 +292,33 @@ const styles = StyleSheet.create({
     fontSize: 17,
     minHeight: 48,
     paddingHorizontal: 14,
+  },
+  submitButton: {
+    alignItems: 'center',
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    justifyContent: 'center',
+    marginTop: 12,
+    minHeight: 48,
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#aeb8c6',
+  },
+  submitButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  selectedTopicLabel: {
+    color: '#526071',
+    fontSize: 13,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  selectedTopic: {
+    color: '#172033',
+    fontSize: 18,
+    lineHeight: 25,
   },
   content: {
     padding: 20,
