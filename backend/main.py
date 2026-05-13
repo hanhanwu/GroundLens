@@ -129,7 +129,7 @@ async def find_spans_and_qa(
                     verified.append(found)
                 else:
                     log.debug("Span not found doc=%s topic=%r span=%r", doc_id, topic, s)
-            result_spans[topic] = verified[:3]
+            result_spans[topic] = verified[:1]
             log.debug("doc=%s topic=%r => spans: %s", doc_id, topic, result_spans[topic])
 
         # --- Parse Q&A (_qa key in same flat object) ---

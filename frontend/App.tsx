@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
@@ -118,7 +118,7 @@ const TOPIC_COLORS: { bg: string; border: string; text: string }[] = [
   { bg: 'rgba(59,  130, 246, 0.12)', border: 'rgba(59,  130, 246, 0.40)', text: '#1e3a6e' },
 ];
 
-type ColoredTopic = { text: string; color: string; spans: string[] };
+type ColoredTopic = { text: string; color: string; palette: { bg: string; border: string; text: string }; spans: string[] };
 
 function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[] }) {
   const ranges: { start: number; end: number; color: string }[] = [];
@@ -172,8 +172,6 @@ function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[
   );
 }
 
-type LayoutRect = { y: number; height: number };
-
 function DocumentCard({
   doc,
   matchedTopics,
@@ -181,142 +179,50 @@ function DocumentCard({
   doc: KnowledgeDocument;
   matchedTopics: ColoredTopic[];
 }) {
-  const [blockLayouts, setBlockLayouts] = useState<Record<number, LayoutRect>>({});
-  const [qaLayouts, setQaLayouts] = useState<Record<number, LayoutRect>>({});
-  const [leftColumnWidth, setLeftColumnWidth] = useState(0);
-
   const bodyBlocks = formatContent(getDocumentBody(doc.content));
   const qaPairs = doc.qaPairs ?? [];
 
-  // Map each QA index to the first body block whose text contains its span
-  const spanToBlockIndex: Record<number, number> = {};
-  qaPairs.forEach((qa, qaIndex) => {
-    const blockIndex = bodyBlocks.findIndex((b) => b.text.includes(qa.span));
-    if (blockIndex !== -1) spanToBlockIndex[qaIndex] = blockIndex;
-  });
-
-  const CONN_COLOR = '#94a3b8';
-  const ARM_LEFT = 12;
-  const ARM_RIGHT = 16;
-
-  const connectors = qaPairs.map((_, qaIndex) => {
-    const blockIndex = spanToBlockIndex[qaIndex];
-    if (blockIndex === undefined) return null;
-    const bl = blockLayouts[blockIndex];
-    const ql = qaLayouts[qaIndex];
-    if (!bl || !ql || leftColumnWidth === 0) return null;
-    return {
-      fromY: bl.y + bl.height / 2,
-      toY: ql.y + ql.height / 2,
-    };
-  });
-
-  const hasQA = qaPairs.length > 0;
+  // Map each span to its topic's color palette
+  const spanToPalette: Record<string, { bg: string; border: string; text: string }> = {};
+  for (const { palette, spans } of matchedTopics) {
+    for (const span of spans) spanToPalette[span] = palette;
+  }
 
   return (
     <View style={styles.document}>
       <Text style={styles.documentTitle}>
         <HighlightedText text={doc.title} topics={matchedTopics} />
       </Text>
-      <View style={{ flexDirection: 'row' }}>
-        {/* Left column: document body */}
-        <View
-          style={hasQA ? styles.docLeft : { flex: 1 }}
-          onLayout={(e) => setLeftColumnWidth(e.nativeEvent.layout.width)}
-        >
-          {bodyBlocks.map((block, index) => (
-            <View
+      {bodyBlocks.map((block, index) => {
+        const matchingQA = qaPairs.find((qa) => block.text.includes(qa.span));
+        const palette = matchingQA ? (spanToPalette[matchingQA.span] ?? null) : null;
+
+        if (!matchingQA || !palette) {
+          return (
+            <Text
               key={`${doc.id}-b${index}`}
-              onLayout={(e) =>
-                setBlockLayouts((prev) => ({
-                  ...prev,
-                  [index]: { y: e.nativeEvent.layout.y, height: e.nativeEvent.layout.height },
-                }))
-              }
+              style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
             >
-              <Text style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}>
+              <HighlightedText text={block.text} topics={matchedTopics} />
+            </Text>
+          );
+        }
+
+        return (
+          <View key={`${doc.id}-b${index}`} style={styles.qaRow}>
+            <View style={styles.qaRowText}>
+              <Text style={[block.kind === 'heading' ? styles.sectionHeading : styles.paragraph, { marginBottom: 0, marginTop: 0 }]}>
                 <HighlightedText text={block.text} topics={matchedTopics} />
               </Text>
             </View>
-          ))}
-        </View>
-
-        {/* Right column: Q&A cards */}
-        {hasQA && (
-          <View style={styles.qaColumn}>
-            {qaPairs.map((qa, index) => (
-              <View
-                key={`${doc.id}-qa${index}`}
-                style={styles.qaCard}
-                onLayout={(e) =>
-                  setQaLayouts((prev) => ({
-                    ...prev,
-                    [index]: { y: e.nativeEvent.layout.y, height: e.nativeEvent.layout.height },
-                  }))
-                }
-              >
-                <Text style={styles.qaQuestion}>{qa.question}</Text>
-                <Text style={styles.qaAnswer}>{qa.answer}</Text>
-              </View>
-            ))}
+            <View style={[styles.qaDash, { borderColor: palette.border }]} />
+            <View style={[styles.qaCard, { backgroundColor: palette.bg, borderColor: palette.border }]}>
+              <Text style={[styles.qaQuestion, { color: palette.text }]}>{matchingQA.question}</Text>
+              <Text style={styles.qaAnswer}>{matchingQA.answer}</Text>
+            </View>
           </View>
-        )}
-
-        {/* Dashed connecting lines overlay */}
-        {hasQA && (
-          <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
-            {connectors.map((conn, i) => {
-              if (!conn) return null;
-              const { fromY, toY } = conn;
-              return (
-                <Fragment key={i}>
-                  {/* Left arm: horizontal dashes from doc text to column boundary */}
-                  <View
-                    style={{
-                      position: 'absolute',
-                      left: leftColumnWidth - ARM_LEFT,
-                      top: fromY,
-                      width: ARM_LEFT,
-                      height: 0,
-                      borderTopWidth: 1.5,
-                      borderColor: CONN_COLOR,
-                      borderStyle: 'dashed',
-                    }}
-                  />
-                  {/* Vertical bridge between the two Y positions */}
-                  {Math.abs(fromY - toY) > 2 && (
-                    <View
-                      style={{
-                        position: 'absolute',
-                        left: leftColumnWidth - 0.75,
-                        top: Math.min(fromY, toY),
-                        width: 0,
-                        height: Math.abs(toY - fromY),
-                        borderLeftWidth: 1.5,
-                        borderLeftColor: CONN_COLOR,
-                        borderStyle: 'dashed',
-                      }}
-                    />
-                  )}
-                  {/* Right arm: horizontal dashes into Q&A column */}
-                  <View
-                    style={{
-                      position: 'absolute',
-                      left: leftColumnWidth,
-                      top: toY,
-                      width: ARM_RIGHT,
-                      height: 0,
-                      borderTopWidth: 1.5,
-                      borderColor: CONN_COLOR,
-                      borderStyle: 'dashed',
-                    }}
-                  />
-                </Fragment>
-              );
-            })}
-          </View>
-        )}
-      </View>
+        );
+      })}
     </View>
   );
 }
@@ -506,7 +412,8 @@ export default function App() {
             const matchedTopics: ColoredTopic[] = submittedTopics.flatMap((topic, i) => {
               const spans = doc.topicSpans[topic] ?? [];
               if (spans.length === 0) return [];
-              return [{ text: topic, color: TOPIC_COLORS[i % TOPIC_COLORS.length].bg, spans }];
+              const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
+              return [{ text: topic, color: palette.bg, palette, spans }];
             });
             return <DocumentCard key={doc.id} doc={doc} matchedTopics={matchedTopics} />;
           })
@@ -777,30 +684,33 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     marginBottom: 16,
   },
-  docLeft: {
-    flex: 6,
-    paddingRight: 12,
+  qaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 0,
   },
-  qaColumn: {
-    flex: 4,
-    paddingLeft: 16,
-    gap: 12,
+  qaRowText: {
+    flex: 3,
+  },
+  qaDash: {
+    width: 16,
+    borderTopWidth: 1.5,
+    borderStyle: 'dashed',
+    alignSelf: 'center',
   },
   qaCard: {
-    backgroundColor: '#f0f4ff',
-    borderColor: '#c7d3ea',
-    borderLeftColor: '#6366f1',
+    flex: 2,
     borderRadius: 8,
-    borderWidth: 1,
-    borderLeftWidth: 3,
-    padding: 12,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    padding: 10,
   },
   qaQuestion: {
-    color: '#1e3a5f',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
-    lineHeight: 18,
-    marginBottom: 5,
+    lineHeight: 17,
+    marginBottom: 4,
   },
   qaAnswer: {
     color: '#374151',
