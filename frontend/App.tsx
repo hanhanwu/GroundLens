@@ -106,32 +106,46 @@ function BrandLogo() {
   );
 }
 
-function HighlightedText({ text, topic }: { text: string; topic: string }) {
-  const normalizedTopic = topic.trim().toLowerCase();
+function HighlightedText({ text, topics }: { text: string; topics: string[] }) {
+  const normalizedTopics = topics.map((t) => t.trim().toLowerCase()).filter(Boolean);
 
-  if (!normalizedTopic) {
+  if (normalizedTopics.length === 0) {
     return <Text>{text}</Text>;
   }
 
-  const segments = [];
   const lowerText = text.toLowerCase();
-  let cursor = 0;
-  let matchIndex = lowerText.indexOf(normalizedTopic);
+  const ranges: { start: number; end: number }[] = [];
 
-  while (matchIndex !== -1) {
-    if (matchIndex > cursor) {
-      segments.push({ text: text.slice(cursor, matchIndex), highlighted: false });
+  for (const normalizedTopic of normalizedTopics) {
+    let idx = lowerText.indexOf(normalizedTopic);
+    while (idx !== -1) {
+      ranges.push({ start: idx, end: idx + normalizedTopic.length });
+      idx = lowerText.indexOf(normalizedTopic, idx + 1);
     }
-
-    const matchEnd = matchIndex + normalizedTopic.length;
-    segments.push({ text: text.slice(matchIndex, matchEnd), highlighted: true });
-    cursor = matchEnd;
-    matchIndex = lowerText.indexOf(normalizedTopic, cursor);
   }
 
-  if (cursor < text.length) {
-    segments.push({ text: text.slice(cursor), highlighted: false });
+  if (ranges.length === 0) {
+    return <Text>{text}</Text>;
   }
+
+  ranges.sort((a, b) => a.start - b.start);
+  const merged: { start: number; end: number }[] = [];
+  for (const range of ranges) {
+    if (merged.length === 0 || range.start > merged[merged.length - 1].end) {
+      merged.push({ ...range });
+    } else {
+      merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, range.end);
+    }
+  }
+
+  const segments: { text: string; highlighted: boolean }[] = [];
+  let cursor = 0;
+  for (const { start, end } of merged) {
+    if (start > cursor) segments.push({ text: text.slice(cursor, start), highlighted: false });
+    segments.push({ text: text.slice(start, end), highlighted: true });
+    cursor = end;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), highlighted: false });
 
   return (
     <Text>
@@ -142,6 +156,25 @@ function HighlightedText({ text, topic }: { text: string; topic: string }) {
       ))}
     </Text>
   );
+}
+
+type MergedDocument = {
+  document: KnowledgeDocument;
+  matchedTopics: string[];
+};
+
+function mergeDocumentResults(topicResults: TopicResult[]): MergedDocument[] {
+  const seen = new Map<string, MergedDocument>();
+  for (const result of topicResults) {
+    for (const doc of result.documents) {
+      if (seen.has(doc.id)) {
+        seen.get(doc.id)!.matchedTopics.push(result.topic);
+      } else {
+        seen.set(doc.id, { document: doc, matchedTopics: [result.topic] });
+      }
+    }
+  }
+  return Array.from(seen.values());
 }
 
 export default function App() {
@@ -302,40 +335,26 @@ export default function App() {
             <Text style={styles.noticeTitle}>Connection issue</Text>
             <Text style={styles.noticeText}>{error}</Text>
           </View>
-        ) : topicResults.every((result) => result.documents.length === 0) ? (
+        ) : mergeDocumentResults(topicResults).length === 0 ? (
           <View style={styles.notice}>
             <Text style={styles.noticeTitle}>No matching document</Text>
             <Text style={styles.noticeText}>Try other topics from the knowledge base.</Text>
           </View>
         ) : (
-          topicResults.map((result) => (
-            <View key={result.topic} style={styles.topicResult}>
-              <Text style={styles.topicResultTitle}>{result.topic}</Text>
-              {result.documents.length === 0 ? (
-                <View style={styles.notice}>
-                  <Text style={styles.noticeTitle}>No match for this topic</Text>
-                  <Text style={styles.noticeText}>No document contains "{result.topic}".</Text>
-                </View>
-              ) : (
-                result.documents.map((document) => (
-                  <View key={`${result.topic}-${document.id}`} style={styles.document}>
-                    <Text style={styles.documentTitle}>
-                      <HighlightedText text={document.title} topic={result.topic} />
-                    </Text>
+          mergeDocumentResults(topicResults).map(({ document, matchedTopics }) => (
+            <View key={document.id} style={styles.document}>
+              <Text style={styles.documentTitle}>
+                <HighlightedText text={document.title} topics={matchedTopics} />
+              </Text>
 
-                    {formatContent(getDocumentBody(document.content)).map((block, index) => {
-                      return (
-                        <Text
-                          key={`${document.id}-${index}`}
-                          style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
-                        >
-                          <HighlightedText text={block.text} topic={result.topic} />
-                        </Text>
-                      );
-                    })}
-                  </View>
-                ))
-              )}
+              {formatContent(getDocumentBody(document.content)).map((block, index) => (
+                <Text
+                  key={`${document.id}-${index}`}
+                  style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
+                >
+                  <HighlightedText text={block.text} topics={matchedTopics} />
+                </Text>
+              ))}
             </View>
           ))
         )}
