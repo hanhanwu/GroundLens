@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Platform,
   Pressable,
   SafeAreaView,
@@ -23,6 +24,11 @@ type DocumentsResponse = {
   documents: KnowledgeDocument[];
 };
 
+type TopicResult = {
+  topic: string;
+  documents: KnowledgeDocument[];
+};
+
 type ContentBlock = {
   kind: 'heading' | 'paragraph';
   text: string;
@@ -30,6 +36,8 @@ type ContentBlock = {
 
 const BACKEND_URL =
   Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
+
+const logoSource = require('./assets/icon.png');
 
 const sectionMarkers = [
   'Before you begin:',
@@ -89,6 +97,15 @@ function getDocumentBody(content: string) {
   return content.split(/\r?\n/).slice(1).join('\n').trim();
 }
 
+function BrandLogo() {
+  return (
+    <View style={styles.brandRow}>
+      <Image source={logoSource} style={styles.logo} />
+      <Text style={styles.brand}>GroundLens</Text>
+    </View>
+  );
+}
+
 function HighlightedText({ text, topic }: { text: string; topic: string }) {
   const normalizedTopic = topic.trim().toLowerCase();
 
@@ -128,27 +145,47 @@ function HighlightedText({ text, topic }: { text: string; topic: string }) {
 }
 
 export default function App() {
-  const [topic, setTopic] = useState('');
-  const [submittedTopic, setSubmittedTopic] = useState('');
-  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [topics, setTopics] = useState(['']);
+  const [submittedTopics, setSubmittedTopics] = useState<string[]>([]);
+  const [topicResults, setTopicResults] = useState<TopicResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const canSubmit = topic.trim().length > 0;
+  const canSubmit = topics.some((topic) => topic.trim().length > 0);
+
+  function updateTopic(index: number, text: string) {
+    setTopics((currentTopics) => {
+      const nextTopics = [...currentTopics];
+      nextTopics[index] = text;
+      return nextTopics;
+    });
+  }
+
+  function addTopic() {
+    setTopics((currentTopics) => [...currentTopics, '']);
+  }
 
   function submitTopic() {
-    const nextTopic = topic.trim();
+    const nextTopics = topics
+      .map((topic) => topic.trim())
+      .filter(Boolean);
 
-    if (!nextTopic) {
+    if (nextTopics.length === 0) {
       return;
     }
 
-    setSubmittedTopic(nextTopic);
+    setSubmittedTopics(nextTopics);
+  }
+
+  function editTopics() {
+    setSubmittedTopics([]);
+    setTopicResults([]);
+    setError('');
   }
 
   useEffect(() => {
-    if (!submittedTopic) {
-      setDocuments([]);
+    if (submittedTopics.length === 0) {
+      setTopicResults([]);
       setError('');
       setIsLoading(false);
       return;
@@ -157,48 +194,67 @@ export default function App() {
     setIsLoading(true);
     setError('');
 
-    fetch(`${BACKEND_URL}/documents?topic=${encodeURIComponent(submittedTopic)}`)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Could not load the knowledge base.');
-        }
+    Promise.all(
+      submittedTopics.map((topic) =>
+        fetch(`${BACKEND_URL}/documents?topic=${encodeURIComponent(topic)}`)
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error('Could not load the knowledge base.');
+            }
 
-        return response.json() as Promise<DocumentsResponse>;
-      })
-      .then((data) => setDocuments(data.documents))
+            return response.json() as Promise<DocumentsResponse>;
+          })
+          .then((data) => ({
+            topic,
+            documents: data.documents,
+          }))
+      )
+    )
+      .then(setTopicResults)
       .catch(() => {
-        setDocuments([]);
+        setTopicResults([]);
         setError('Could not reach the backend at http://localhost:8000. Start FastAPI and try again.');
       })
       .finally(() => setIsLoading(false));
-  }, [submittedTopic]);
+  }, [submittedTopics]);
 
-  if (!submittedTopic) {
+  if (submittedTopics.length === 0) {
     return (
       <SafeAreaView style={styles.screen}>
         <StatusBar style="dark" />
-        <View style={styles.startContainer}>
-          <Text style={styles.brand}>GroundLens</Text>
-          <Text style={styles.startPrompt}>Type a topic to search the knowledge base</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={setTopic}
-            onSubmitEditing={submitTopic}
-            placeholder="Create targeted campaigns for Facebook"
-            placeholderTextColor="#78818f"
-            returnKeyType="search"
-            style={styles.input}
-            value={topic}
-          />
-          <Pressable
-            disabled={!canSubmit}
-            onPress={submitTopic}
-            style={[styles.submitButton, !canSubmit && styles.submitButtonDisabled]}
-          >
-            <Text style={styles.submitButtonText}>Submit</Text>
-          </Pressable>
+        <View style={styles.topBar}>
+          <BrandLogo />
         </View>
+        <ScrollView contentContainerStyle={styles.startContainer} keyboardShouldPersistTaps="handled">
+          {topics.map((topic, index) => (
+            <View key={index} style={styles.topicGroup}>
+              <Text style={styles.topicLabel}>Topic {index + 1}</Text>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={(text) => updateTopic(index, text)}
+                onSubmitEditing={submitTopic}
+                placeholder="Create targeted campaigns for Facebook"
+                placeholderTextColor="#78818f"
+                returnKeyType="search"
+                style={styles.input}
+                value={topic}
+              />
+            </View>
+          ))}
+          <View style={styles.actionRow}>
+            <Pressable accessibilityLabel="Add topic" onPress={addTopic} style={styles.addButton}>
+              <Text style={styles.addButtonText}>+ Add Topic</Text>
+            </Pressable>
+            <Pressable
+              disabled={!canSubmit}
+              onPress={submitTopic}
+              style={[styles.submitButton, !canSubmit && styles.submitButtonDisabled]}
+            >
+              <Text style={styles.submitButtonText}>Submit</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -207,9 +263,16 @@ export default function App() {
     <SafeAreaView style={styles.screen}>
       <StatusBar style="dark" />
       <View style={styles.header}>
-        <Text style={styles.brand}>GroundLens</Text>
-        <Text style={styles.selectedTopicLabel}>Selected topic</Text>
-        <Text style={styles.selectedTopic}>{submittedTopic}</Text>
+        <BrandLogo />
+        <View style={styles.selectedTopicsRow}>
+          <View style={styles.selectedTopicsText}>
+            <Text style={styles.selectedTopicLabel}>Selected topics</Text>
+            <Text style={styles.selectedTopic}>{submittedTopics.join(', ')}</Text>
+          </View>
+          <Pressable accessibilityLabel="Edit topics" onPress={editTopics} style={styles.editTopicsButton}>
+            <Text style={styles.editTopicsButtonText}>Edit</Text>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -223,28 +286,40 @@ export default function App() {
             <Text style={styles.noticeTitle}>Connection issue</Text>
             <Text style={styles.noticeText}>{error}</Text>
           </View>
-        ) : documents.length === 0 ? (
+        ) : topicResults.every((result) => result.documents.length === 0) ? (
           <View style={styles.notice}>
             <Text style={styles.noticeTitle}>No matching document</Text>
-            <Text style={styles.noticeText}>Try another topic from the knowledge base.</Text>
+            <Text style={styles.noticeText}>Try other topics from the knowledge base.</Text>
           </View>
         ) : (
-          documents.map((document) => (
-            <View key={document.id} style={styles.document}>
-              <Text style={styles.documentTitle}>
-                <HighlightedText text={document.title} topic={submittedTopic} />
-              </Text>
+          topicResults.map((result) => (
+            <View key={result.topic} style={styles.topicResult}>
+              <Text style={styles.topicResultTitle}>{result.topic}</Text>
+              {result.documents.length === 0 ? (
+                <View style={styles.notice}>
+                  <Text style={styles.noticeTitle}>No match for this topic</Text>
+                  <Text style={styles.noticeText}>No document contains "{result.topic}".</Text>
+                </View>
+              ) : (
+                result.documents.map((document) => (
+                  <View key={`${result.topic}-${document.id}`} style={styles.document}>
+                    <Text style={styles.documentTitle}>
+                      <HighlightedText text={document.title} topic={result.topic} />
+                    </Text>
 
-              {formatContent(getDocumentBody(document.content)).map((block, index) => {
-                return (
-                  <Text
-                    key={`${document.id}-${index}`}
-                    style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
-                  >
-                    <HighlightedText text={block.text} topic={submittedTopic} />
-                  </Text>
-                );
-              })}
+                    {formatContent(getDocumentBody(document.content)).map((block, index) => {
+                      return (
+                        <Text
+                          key={`${document.id}-${index}`}
+                          style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
+                        >
+                          <HighlightedText text={block.text} topic={result.topic} />
+                        </Text>
+                      );
+                    })}
+                  </View>
+                ))
+              )}
             </View>
           ))
         )}
@@ -259,9 +334,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#f6f8fb',
   },
   startContainer: {
-    flex: 1,
+    alignItems: 'center',
+    flexGrow: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
+    paddingVertical: 24,
+  },
+  topBar: {
+    alignItems: 'flex-start',
+    paddingHorizontal: 20,
+    paddingTop: 14,
   },
   header: {
     backgroundColor: '#ffffff',
@@ -271,17 +353,38 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     paddingTop: 14,
   },
+  brandRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  logo: {
+    borderRadius: 7,
+    height: 32,
+    width: 32,
+  },
   brand: {
     color: '#172033',
     fontSize: 28,
     fontWeight: '800',
-    marginBottom: 14,
   },
   startPrompt: {
     color: '#526071',
     fontSize: 17,
     lineHeight: 24,
     marginBottom: 18,
+  },
+  topicGroup: {
+    maxWidth: 520,
+    marginBottom: 14,
+    width: '100%',
+  },
+  topicLabel: {
+    color: '#172033',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 8,
   },
   input: {
     backgroundColor: '#ffffff',
@@ -293,13 +396,37 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
   },
+  actionRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'center',
+    marginTop: 2,
+    maxWidth: 520,
+    width: '100%',
+  },
+  addButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#b7c1cf',
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  addButtonText: {
+    color: '#172033',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   submitButton: {
     alignItems: 'center',
     backgroundColor: '#2563eb',
     borderRadius: 8,
     justifyContent: 'center',
-    marginTop: 12,
-    minHeight: 48,
+    minHeight: 42,
+    paddingHorizontal: 22,
   },
   submitButtonDisabled: {
     backgroundColor: '#aeb8c6',
@@ -307,6 +434,29 @@ const styles = StyleSheet.create({
   submitButtonText: {
     color: '#ffffff',
     fontSize: 16,
+    fontWeight: '700',
+  },
+  selectedTopicsRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  selectedTopicsText: {
+    flex: 1,
+  },
+  editTopicsButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#b7c1cf',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: 14,
+  },
+  editTopicsButtonText: {
+    color: '#172033',
+    fontSize: 15,
     fontWeight: '700',
   },
   selectedTopicLabel: {
@@ -350,6 +500,16 @@ const styles = StyleSheet.create({
     color: '#526071',
     fontSize: 15,
     lineHeight: 22,
+  },
+  topicResult: {
+    gap: 14,
+    marginBottom: 22,
+  },
+  topicResultTitle: {
+    color: '#172033',
+    fontSize: 20,
+    fontWeight: '800',
+    lineHeight: 28,
   },
   document: {
     backgroundColor: '#ffffff',
