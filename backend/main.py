@@ -4,8 +4,11 @@ import os
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(message)s")
 log = logging.getLogger("groundlens")
@@ -23,8 +26,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory cache: (sorted_topics_tuple, doc_id) -> {topic: [spans]}
-_spans_cache: dict[tuple, dict[str, list[str]]] = {}
+# In-memory cache: (sorted_topics_tuple, doc_id) -> {"spans": {topic: [spans]}, "qa": [...]}
+_combined_cache: dict[tuple, dict] = {}
 _CACHE_MAX = 500
 
 
@@ -46,34 +49,39 @@ def _find_verbatim(span: str, content: str) -> str | None:
     return content[idx : idx + len(span)]
 
 
-async def find_spans_for_topics(
+async def find_spans_and_qa(
     topics: list[str], content: str, doc_id: str
-) -> dict[str, list[str]]:
-    """One Groq call to find up to 3 verbatim spans per topic in content."""
+) -> tuple[dict[str, list[str]], list[dict]]:
+    """Single Groq call: find verbatim spans per topic AND generate one Q&A pair per span."""
     cache_key = (tuple(sorted(topics)), doc_id)
-    if cache_key in _spans_cache:
-        return _spans_cache[cache_key]
+    if cache_key in _combined_cache:
+        cached = _combined_cache[cache_key]
+        return cached["spans"], cached["qa"]
 
-    empty: dict[str, list[str]] = {t: [] for t in topics}
+    empty_spans: dict[str, list[str]] = {t: [] for t in topics}
 
     if not GROQ_API_KEY:
-        return empty
+        return empty_spans, []
 
     topics_json = json.dumps(topics)
     prompt = (
         "You are a precise text-analysis assistant.\n"
-        "Given a list of topics and a document, find up to 3 short verbatim excerpts "
-        "from the document that are most relevant to EACH topic.\n\n"
+        "Given a list of topics and a document, do the following:\n"
+        "1. For each topic, find up to 3 short verbatim excerpts from the document.\n"
+        "2. For every excerpt you found, add one entry to a special \"_qa\" key: "
+        "a question the excerpt answers plus a concise 1-2 sentence answer.\n\n"
         "Rules:\n"
-        "- Each excerpt must be copied VERBATIM from the document — no paraphrasing\n"
-        "- Each excerpt should be a meaningful phrase, clause, or sentence (not a single word)\n"
-        "- Return at most 3 excerpts per topic; return fewer if fewer are relevant\n"
-        "- If nothing in the document is relevant to a topic, use an empty array for that topic\n"
-        "- Reply with ONLY a valid JSON object mapping each topic to its array of excerpts\n"
-        "- No explanation, no markdown fences\n\n"
+        "- Excerpts must be copied VERBATIM from the document — no paraphrasing\n"
+        "- Each excerpt is a meaningful phrase, clause, or sentence (not a single word)\n"
+        "- If a topic has no relevant excerpt use an empty array\n"
+        "- Reply ONLY with valid JSON, no markdown fences, no extra text\n"
+        "- The JSON object has one key per topic (array of excerpts) "
+        "plus a \"_qa\" key (array of Q&A objects)\n\n"
         f"Topics: {topics_json}\n\n"
         f"Document:\n{content}\n\n"
-        'Example reply: {"topic one": ["verbatim phrase"], "topic two": []}'
+        "Example reply for topics [\"foo\", \"bar\"]:\n"
+        '{"foo": ["verbatim phrase one"], "bar": [], '
+        '"_qa": [{"span": "verbatim phrase one", "question": "What is...?", "answer": "It is..."}]}'
     )
 
     try:
@@ -93,7 +101,7 @@ async def find_spans_for_topics(
             response.raise_for_status()
 
         raw = response.json()["choices"][0]["message"]["content"].strip()
-        log.debug("Groq raw response for doc=%s topics=%s:\n%s", doc_id, topics, raw)
+        log.debug("Groq combined response for doc=%s topics=%s:\n%s", doc_id, topics, raw)
 
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -104,39 +112,55 @@ async def find_spans_for_topics(
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
             log.warning("Groq returned non-dict for doc=%s: %r", doc_id, parsed)
-            return empty
+            return empty_spans, []
 
-        result: dict[str, list[str]] = {}
+        # --- Parse spans (flat: topic -> [excerpts]) ---
+        result_spans: dict[str, list[str]] = {}
         for topic in topics:
-            spans = parsed.get(topic, [])
-            if not isinstance(spans, list):
-                spans = []
-            verified = []
-            for s in spans:
+            raw_list = parsed.get(topic, [])
+            if not isinstance(raw_list, list):
+                raw_list = []
+            verified: list[str] = []
+            for s in raw_list:
                 if not isinstance(s, str) or not s.strip():
                     continue
                 found = _find_verbatim(s, content)
                 if found:
                     verified.append(found)
                 else:
-                    log.debug("Span not found in doc=%s topic=%r span=%r", doc_id, topic, s)
-            result[topic] = verified[:3]
-            log.debug("doc=%s topic=%r => verified spans: %s", doc_id, topic, result[topic])
+                    log.debug("Span not found doc=%s topic=%r span=%r", doc_id, topic, s)
+            result_spans[topic] = verified[:3]
+            log.debug("doc=%s topic=%r => spans: %s", doc_id, topic, result_spans[topic])
 
-        # Evict oldest entries if cache is full
-        if len(_spans_cache) >= _CACHE_MAX:
-            oldest = next(iter(_spans_cache))
-            del _spans_cache[oldest]
+        # --- Parse Q&A (_qa key in same flat object) ---
+        qa_raw = parsed.get("_qa", [])
+        result_qa: list[dict] = []
+        if isinstance(qa_raw, list):
+            for item in qa_raw:
+                if (
+                    isinstance(item, dict)
+                    and isinstance(item.get("span"), str)
+                    and isinstance(item.get("question"), str)
+                    and isinstance(item.get("answer"), str)
+                ):
+                    result_qa.append({
+                        "span": item["span"],
+                        "question": item["question"],
+                        "answer": item["answer"],
+                    })
 
-        # Only cache if at least one topic got spans — avoids persisting empty results
-        # from truncated prompts or transient Groq errors
-        if any(result.values()):
-            _spans_cache[cache_key] = result
-        return result
+        # Cache only when spans were found (avoids persisting empty transient failures)
+        if any(result_spans.values()):
+            if len(_combined_cache) >= _CACHE_MAX:
+                oldest = next(iter(_combined_cache))
+                del _combined_cache[oldest]
+            _combined_cache[cache_key] = {"spans": result_spans, "qa": result_qa}
+
+        return result_spans, result_qa
 
     except Exception as exc:
         log.exception("Groq call failed for doc=%s topics=%s: %s", doc_id, topics, exc)
-        return empty
+        return empty_spans, []
 
 
 def _word_pre_filter(topics: list[str], content: str) -> bool:
@@ -165,7 +189,7 @@ async def documents(topic: list[str] = Query(default=[])):
                 log.debug("Pre-filter skipped doc=%s for topics=%s", path.stem, topics)
                 continue
 
-            topic_spans = await find_spans_for_topics(topics, content, path.stem)
+            topic_spans, qa_pairs = await find_spans_and_qa(topics, content, path.stem)
             log.debug("Final topicSpans for doc=%s: %s", path.stem, topic_spans)
 
             # Only include document if Groq found at least one span for any topic
@@ -174,6 +198,7 @@ async def documents(topic: list[str] = Query(default=[])):
                 continue
         else:
             topic_spans = {}
+            qa_pairs = []
 
         title = content.splitlines()[0].strip() if content.splitlines() else path.stem
         items.append(
@@ -182,6 +207,7 @@ async def documents(topic: list[str] = Query(default=[])):
                 "title": title,
                 "content": content,
                 "topicSpans": topic_spans,
+                "qaPairs": qa_pairs,
             }
         )
 
