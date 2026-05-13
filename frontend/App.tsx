@@ -107,21 +107,28 @@ function BrandLogo() {
   );
 }
 
-function HighlightedText({ text, topics }: { text: string; topics: string[] }) {
-  const normalizedTopics = topics.map((t) => t.trim().toLowerCase()).filter(Boolean);
+const TOPIC_COLORS: { bg: string; border: string; text: string }[] = [
+  { bg: 'rgba(255, 140, 50, 0.15)',  border: 'rgba(255, 140, 50, 0.45)',  text: '#7a3a00' },
+  { bg: 'rgba(99,  102, 241, 0.12)', border: 'rgba(99,  102, 241, 0.40)', text: '#2d2d80' },
+  { bg: 'rgba(16,  185, 129, 0.12)', border: 'rgba(16,  185, 129, 0.40)', text: '#065f46' },
+  { bg: 'rgba(236,  72, 153, 0.12)', border: 'rgba(236,  72, 153, 0.40)', text: '#7c1252' },
+  { bg: 'rgba(234, 179,   8, 0.13)', border: 'rgba(234, 179,   8, 0.42)', text: '#6b4c00' },
+  { bg: 'rgba(59,  130, 246, 0.12)', border: 'rgba(59,  130, 246, 0.40)', text: '#1e3a6e' },
+];
 
-  if (normalizedTopics.length === 0) {
-    return <Text>{text}</Text>;
-  }
+type ColoredTopic = { text: string; color: string };
 
+function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[] }) {
   const lowerText = text.toLowerCase();
-  const ranges: { start: number; end: number }[] = [];
+  const ranges: { start: number; end: number; color: string }[] = [];
 
-  for (const normalizedTopic of normalizedTopics) {
-    let idx = lowerText.indexOf(normalizedTopic);
+  for (const { text: topicText, color } of topics) {
+    const normalized = topicText.trim().toLowerCase();
+    if (!normalized) continue;
+    let idx = lowerText.indexOf(normalized);
     while (idx !== -1) {
-      ranges.push({ start: idx, end: idx + normalizedTopic.length });
-      idx = lowerText.indexOf(normalizedTopic, idx + 1);
+      ranges.push({ start: idx, end: idx + normalized.length, color });
+      idx = lowerText.indexOf(normalized, idx + 1);
     }
   }
 
@@ -130,28 +137,33 @@ function HighlightedText({ text, topics }: { text: string; topics: string[] }) {
   }
 
   ranges.sort((a, b) => a.start - b.start);
-  const merged: { start: number; end: number }[] = [];
+  // merge overlapping ranges, keeping the first color
+  const merged: { start: number; end: number; color: string }[] = [];
   for (const range of ranges) {
-    if (merged.length === 0 || range.start > merged[merged.length - 1].end) {
+    const last = merged[merged.length - 1];
+    if (!last || range.start > last.end) {
       merged.push({ ...range });
-    } else {
-      merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, range.end);
+    } else if (range.end > last.end) {
+      last.end = range.end;
     }
   }
 
-  const segments: { text: string; highlighted: boolean }[] = [];
+  const segments: { text: string; color: string | null }[] = [];
   let cursor = 0;
-  for (const { start, end } of merged) {
-    if (start > cursor) segments.push({ text: text.slice(cursor, start), highlighted: false });
-    segments.push({ text: text.slice(start, end), highlighted: true });
+  for (const { start, end, color } of merged) {
+    if (start > cursor) segments.push({ text: text.slice(cursor, start), color: null });
+    segments.push({ text: text.slice(start, end), color });
     cursor = end;
   }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor), highlighted: false });
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), color: null });
 
   return (
     <Text>
       {segments.map((segment, index) => (
-        <Text key={`${segment.text}-${index}`} style={segment.highlighted ? styles.highlight : undefined}>
+        <Text
+          key={`${segment.text}-${index}`}
+          style={segment.color ? { backgroundColor: segment.color, color: '#111827' } : undefined}
+        >
           {segment.text}
         </Text>
       ))}
@@ -161,17 +173,21 @@ function HighlightedText({ text, topics }: { text: string; topics: string[] }) {
 
 type MergedDocument = {
   document: KnowledgeDocument;
-  matchedTopics: string[];
+  matchedTopics: ColoredTopic[];
 };
 
-function mergeDocumentResults(topicResults: TopicResult[]): MergedDocument[] {
+function mergeDocumentResults(
+  topicResults: TopicResult[],
+  topicColorMap: Map<string, string>,
+): MergedDocument[] {
   const seen = new Map<string, MergedDocument>();
   for (const result of topicResults) {
+    const color = topicColorMap.get(result.topic) ?? TOPIC_COLORS[0].bg;
     for (const doc of result.documents) {
       if (seen.has(doc.id)) {
-        seen.get(doc.id)!.matchedTopics.push(result.topic);
+        seen.get(doc.id)!.matchedTopics.push({ text: result.topic, color });
       } else {
-        seen.set(doc.id, { document: doc, matchedTopics: [result.topic] });
+        seen.set(doc.id, { document: doc, matchedTopics: [{ text: result.topic, color }] });
       }
     }
   }
@@ -199,6 +215,10 @@ export default function App() {
   }, [arrowAnim]);
 
   const canSubmit = topics.some((topic) => topic.trim().length > 0);
+
+  const topicColorMap = new Map(
+    submittedTopics.map((topic, i) => [topic, TOPIC_COLORS[i % TOPIC_COLORS.length].bg])
+  );
 
   function updateTopic(index: number, text: string) {
     setTopics((currentTopics) => {
@@ -330,11 +350,17 @@ export default function App() {
         <View style={styles.selectedTopicsRow}>
           <Text style={styles.selectedTopicLabel}>Selected topics</Text>
           <View style={styles.selectedTopicsChips}>
-            {submittedTopics.map((topic) => (
-              <View key={topic} style={styles.topicChip}>
-                <Text style={styles.topicChipText}>{topic}</Text>
-              </View>
-            ))}
+            {submittedTopics.map((topic, i) => {
+              const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
+              return (
+                <View
+                  key={topic}
+                  style={[styles.topicChip, { backgroundColor: palette.bg, borderColor: palette.border }]}
+                >
+                  <Text style={[styles.topicChipText, { color: palette.text }]}>{topic}</Text>
+                </View>
+              );
+            })}
             <Pressable accessibilityLabel="Edit topics" onPress={editTopics} style={styles.editTopicsButton}>
               <Animated.Text style={[styles.editTopicsArrow, { transform: [{ translateX: arrowAnim }] }]}>←</Animated.Text>
               <Text style={styles.editTopicsButtonText}>Edit Topics</Text>
@@ -354,13 +380,13 @@ export default function App() {
             <Text style={styles.noticeTitle}>Connection issue</Text>
             <Text style={styles.noticeText}>{error}</Text>
           </View>
-        ) : mergeDocumentResults(topicResults).length === 0 ? (
+        ) : mergeDocumentResults(topicResults, topicColorMap).length === 0 ? (
           <View style={styles.notice}>
             <Text style={styles.noticeTitle}>No matching document</Text>
             <Text style={styles.noticeText}>Try other topics from the knowledge base.</Text>
           </View>
         ) : (
-          mergeDocumentResults(topicResults).map(({ document, matchedTopics }) => (
+          mergeDocumentResults(topicResults, topicColorMap).map(({ document, matchedTopics }) => (
             <View key={document.id} style={styles.document}>
               <Text style={styles.documentTitle}>
                 <HighlightedText text={document.title} topics={matchedTopics} />
@@ -644,7 +670,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   highlight: {
-    backgroundColor: '#bbf7d0',
     color: '#111827',
   },
 });
