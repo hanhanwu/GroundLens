@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   ActivityIndicator,
   Image,
   Platform,
@@ -184,6 +185,19 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const arrowAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(arrowAnim, { toValue: -5, duration: 400, useNativeDriver: true }),
+        Animated.timing(arrowAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [arrowAnim]);
+
   const canSubmit = topics.some((topic) => topic.trim().length > 0);
 
   function updateTopic(index: number, text: string) {
@@ -314,13 +328,18 @@ export default function App() {
       <View style={styles.header}>
         <BrandLogo />
         <View style={styles.selectedTopicsRow}>
-          <View style={styles.selectedTopicsText}>
-            <Text style={styles.selectedTopicLabel}>Selected topics</Text>
-            <Text style={styles.selectedTopic}>{submittedTopics.join(', ')}</Text>
+          <Text style={styles.selectedTopicLabel}>Selected topics</Text>
+          <View style={styles.selectedTopicsChips}>
+            {submittedTopics.map((topic) => (
+              <View key={topic} style={styles.topicChip}>
+                <Text style={styles.topicChipText}>{topic}</Text>
+              </View>
+            ))}
+            <Pressable accessibilityLabel="Edit topics" onPress={editTopics} style={styles.editTopicsButton}>
+              <Animated.Text style={[styles.editTopicsArrow, { transform: [{ translateX: arrowAnim }] }]}>←</Animated.Text>
+              <Text style={styles.editTopicsButtonText}>Edit Topics</Text>
+            </Pressable>
           </View>
-          <Pressable accessibilityLabel="Edit topics" onPress={editTopics} style={styles.editTopicsButton}>
-            <Text style={styles.editTopicsButtonText}>Edit</Text>
-          </Pressable>
         </View>
       </View>
 
@@ -501,12 +520,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   selectedTopicsRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
+    flexDirection: 'column',
+    gap: 8,
   },
-  selectedTopicsText: {
-    flex: 1,
+  selectedTopicsChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+  },
+  topicChip: {
+    backgroundColor: 'rgba(255, 140, 50, 0.07)',
+    borderColor: 'rgba(255, 140, 50, 0.35)',
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  topicChipText: {
+    color: '#172033',
+    fontSize: 15,
+    fontWeight: '600',
   },
   editTopicsButton: {
     alignItems: 'center',
@@ -514,9 +548,16 @@ const styles = StyleSheet.create({
     borderColor: '#b7c1cf',
     borderRadius: 8,
     borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
     justifyContent: 'center',
     minHeight: 38,
     paddingHorizontal: 14,
+  },
+  editTopicsArrow: {
+    color: '#172033',
+    fontSize: 15,
+    fontWeight: '700',
   },
   editTopicsButtonText: {
     color: '#172033',
@@ -526,7 +567,6 @@ const styles = StyleSheet.create({
   selectedTopicLabel: {
     color: '#526071',
     fontSize: 13,
-    marginBottom: 4,
     textTransform: 'uppercase',
   },
   selectedTopic: {
