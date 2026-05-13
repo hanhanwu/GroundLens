@@ -11,7 +11,10 @@
 * `cd frontend` --> `npx expo install react-dom react-native-web`
 * Create virtual env in Visual Studio Code
 * `cd backend`
-  * `pip install -r requirements.txt `
+  * `pip install -r requirements.txt`
+* Add environment variables to `~/.zshrc`
+  * `export GROQ_API_KEY=gsk_your_key_here`
+  * Then in the terminal, type `source ~/.zshrc`
 
 ## Test Local Website
 * `source .venv/bin/activate` to activate the virtual env if it's not activated

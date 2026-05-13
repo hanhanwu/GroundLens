@@ -18,15 +18,10 @@ type KnowledgeDocument = {
   id: string;
   title: string;
   content: string;
+  topicSpans: Record<string, string[]>;
 };
 
-type DocumentsResponse = {
-  topic: string;
-  documents: KnowledgeDocument[];
-};
-
-type TopicResult = {
-  topic: string;
+type BatchDocumentsResponse = {
   documents: KnowledgeDocument[];
 };
 
@@ -116,19 +111,19 @@ const TOPIC_COLORS: { bg: string; border: string; text: string }[] = [
   { bg: 'rgba(59,  130, 246, 0.12)', border: 'rgba(59,  130, 246, 0.40)', text: '#1e3a6e' },
 ];
 
-type ColoredTopic = { text: string; color: string };
+type ColoredTopic = { text: string; color: string; spans: string[] };
 
 function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[] }) {
-  const lowerText = text.toLowerCase();
   const ranges: { start: number; end: number; color: string }[] = [];
 
-  for (const { text: topicText, color } of topics) {
-    const normalized = topicText.trim().toLowerCase();
-    if (!normalized) continue;
-    let idx = lowerText.indexOf(normalized);
-    while (idx !== -1) {
-      ranges.push({ start: idx, end: idx + normalized.length, color });
-      idx = lowerText.indexOf(normalized, idx + 1);
+  for (const { color, spans } of topics) {
+    for (const span of spans) {
+      if (!span) continue;
+      let idx = text.indexOf(span);
+      while (idx !== -1) {
+        ranges.push({ start: idx, end: idx + span.length, color });
+        idx = text.indexOf(span, idx + 1);
+      }
     }
   }
 
@@ -137,7 +132,6 @@ function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[
   }
 
   ranges.sort((a, b) => a.start - b.start);
-  // merge overlapping ranges, keeping the first color
   const merged: { start: number; end: number; color: string }[] = [];
   for (const range of ranges) {
     const last = merged[merged.length - 1];
@@ -171,33 +165,10 @@ function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[
   );
 }
 
-type MergedDocument = {
-  document: KnowledgeDocument;
-  matchedTopics: ColoredTopic[];
-};
-
-function mergeDocumentResults(
-  topicResults: TopicResult[],
-  topicColorMap: Map<string, string>,
-): MergedDocument[] {
-  const seen = new Map<string, MergedDocument>();
-  for (const result of topicResults) {
-    const color = topicColorMap.get(result.topic) ?? TOPIC_COLORS[0].bg;
-    for (const doc of result.documents) {
-      if (seen.has(doc.id)) {
-        seen.get(doc.id)!.matchedTopics.push({ text: result.topic, color });
-      } else {
-        seen.set(doc.id, { document: doc, matchedTopics: [{ text: result.topic, color }] });
-      }
-    }
-  }
-  return Array.from(seen.values());
-}
-
 export default function App() {
   const [topics, setTopics] = useState(['']);
   const [submittedTopics, setSubmittedTopics] = useState<string[]>([]);
-  const [topicResults, setTopicResults] = useState<TopicResult[]>([]);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -215,10 +186,6 @@ export default function App() {
   }, [arrowAnim]);
 
   const canSubmit = topics.some((topic) => topic.trim().length > 0);
-
-  const topicColorMap = new Map(
-    submittedTopics.map((topic, i) => [topic, TOPIC_COLORS[i % TOPIC_COLORS.length].bg])
-  );
 
   function updateTopic(index: number, text: string) {
     setTopics((currentTopics) => {
@@ -254,13 +221,13 @@ export default function App() {
 
   function editTopics() {
     setSubmittedTopics([]);
-    setTopicResults([]);
+    setDocuments([]);
     setError('');
   }
 
   useEffect(() => {
     if (submittedTopics.length === 0) {
-      setTopicResults([]);
+      setDocuments([]);
       setError('');
       setIsLoading(false);
       return;
@@ -269,25 +236,18 @@ export default function App() {
     setIsLoading(true);
     setError('');
 
-    Promise.all(
-      submittedTopics.map((topic) =>
-        fetch(`${BACKEND_URL}/documents?topic=${encodeURIComponent(topic)}`)
-          .then((response) => {
-            if (!response.ok) {
-              throw new Error('Could not load the knowledge base.');
-            }
+    const params = submittedTopics
+      .map((t) => `topic=${encodeURIComponent(t)}`)
+      .join('&');
 
-            return response.json() as Promise<DocumentsResponse>;
-          })
-          .then((data) => ({
-            topic,
-            documents: data.documents,
-          }))
-      )
-    )
-      .then(setTopicResults)
+    fetch(`${BACKEND_URL}/documents?${params}`)
+      .then((response) => {
+        if (!response.ok) throw new Error('Could not load the knowledge base.');
+        return response.json() as Promise<BatchDocumentsResponse>;
+      })
+      .then((data) => setDocuments(data.documents))
       .catch(() => {
-        setTopicResults([]);
+        setDocuments([]);
         setError('Could not reach the backend at http://localhost:8000. Start FastAPI and try again.');
       })
       .finally(() => setIsLoading(false));
@@ -380,28 +340,35 @@ export default function App() {
             <Text style={styles.noticeTitle}>Connection issue</Text>
             <Text style={styles.noticeText}>{error}</Text>
           </View>
-        ) : mergeDocumentResults(topicResults, topicColorMap).length === 0 ? (
+        ) : documents.length === 0 ? (
           <View style={styles.notice}>
             <Text style={styles.noticeTitle}>No matching document</Text>
             <Text style={styles.noticeText}>Try other topics from the knowledge base.</Text>
           </View>
         ) : (
-          mergeDocumentResults(topicResults, topicColorMap).map(({ document, matchedTopics }) => (
-            <View key={document.id} style={styles.document}>
-              <Text style={styles.documentTitle}>
-                <HighlightedText text={document.title} topics={matchedTopics} />
-              </Text>
-
-              {formatContent(getDocumentBody(document.content)).map((block, index) => (
-                <Text
-                  key={`${document.id}-${index}`}
-                  style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
-                >
-                  <HighlightedText text={block.text} topics={matchedTopics} />
+          documents.map((doc) => {
+            const matchedTopics: ColoredTopic[] = submittedTopics.flatMap((topic, i) => {
+              const spans = doc.topicSpans[topic] ?? [];
+              if (spans.length === 0) return [];
+              return [{ text: topic, color: TOPIC_COLORS[i % TOPIC_COLORS.length].bg, spans }];
+            });
+            return (
+              <View key={doc.id} style={styles.document}>
+                <Text style={styles.documentTitle}>
+                  <HighlightedText text={doc.title} topics={matchedTopics} />
                 </Text>
-              ))}
-            </View>
-          ))
+
+                {formatContent(getDocumentBody(doc.content)).map((block, index) => (
+                  <Text
+                    key={`${doc.id}-${index}`}
+                    style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
+                  >
+                    <HighlightedText text={block.text} topics={matchedTopics} />
+                  </Text>
+                ))}
+              </View>
+            );
+          })
         )}
       </ScrollView>
     </SafeAreaView>
