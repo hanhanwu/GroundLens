@@ -161,8 +161,16 @@ export default function App() {
     });
   }
 
-  function addTopic() {
-    setTopics((currentTopics) => [...currentTopics, '']);
+  function addTopic(insertAfterIndex?: number) {
+    setTopics((currentTopics) => {
+      const next = [...currentTopics];
+      if (typeof insertAfterIndex === 'number') {
+        next.splice(insertAfterIndex + 1, 0, '');
+      } else {
+        next.push('');
+      }
+      return next;
+    });
   }
 
   function submitTopic() {
@@ -228,24 +236,32 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.startContainer} keyboardShouldPersistTaps="handled">
           {topics.map((topic, index) => (
             <View key={index} style={styles.topicGroup}>
-              <Text style={styles.topicLabel}>Topic {index + 1}</Text>
-              <TextInput
-                autoCapitalize="none"
-                autoCorrect={false}
-                onChangeText={(text) => updateTopic(index, text)}
-                onSubmitEditing={submitTopic}
-                placeholder="Create targeted campaigns for Facebook"
-                placeholderTextColor="#78818f"
-                returnKeyType="search"
-                style={styles.input}
-                value={topic}
-              />
+              <View style={styles.topicRow}>
+                <Text style={styles.topicLabel}>Topic {index + 1}</Text>
+                <TextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={(text) => updateTopic(index, text)}
+                  onSubmitEditing={submitTopic}
+                  placeholder="Create targeted campaigns for Facebook"
+                  placeholderTextColor="#78818f"
+                  returnKeyType="search"
+                  style={styles.input}
+                  value={topic}
+                />
+                <Pressable
+                  accessibilityLabel="Add topic"
+                  onPress={() => addTopic(index)}
+                  style={[styles.addIconButton, index !== topics.length - 1 && { opacity: 0 }]}
+                  disabled={index !== topics.length - 1}
+                  pointerEvents={index !== topics.length - 1 ? 'none' : 'auto'}
+                >
+                  <Text style={styles.addIconText}>+</Text>
+                </Pressable>
+              </View>
             </View>
           ))}
           <View style={styles.actionRow}>
-            <Pressable accessibilityLabel="Add topic" onPress={addTopic} style={styles.addButton}>
-              <Text style={styles.addButtonText}>+ Add Topic</Text>
-            </Pressable>
             <Pressable
               disabled={!canSubmit}
               onPress={submitTopic}
@@ -379,12 +395,22 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     marginBottom: 14,
     width: '100%',
+    alignSelf: 'center',
+  },
+  topicRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
   },
   topicLabel: {
     color: '#172033',
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 8,
+    marginRight: 6,
   },
   input: {
     backgroundColor: '#ffffff',
@@ -395,6 +421,9 @@ const styles = StyleSheet.create({
     fontSize: 17,
     minHeight: 48,
     paddingHorizontal: 14,
+    flex: 1,
+    minWidth: 0,
+    maxWidth: '100%',
   },
   actionRow: {
     alignItems: 'center',
@@ -414,6 +443,22 @@ const styles = StyleSheet.create({
     height: 42,
     justifyContent: 'center',
     paddingHorizontal: 16,
+  },
+  addIconButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#b7c1cf',
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    marginLeft: 8,
+  },
+  addIconText: {
+    color: '#172033',
+    fontSize: 20,
+    fontWeight: '700',
   },
   addButtonText: {
     color: '#172033',
