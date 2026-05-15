@@ -20,6 +20,12 @@ type QAPair = {
   answer: string;
 };
 
+type ApprovedRecord = {
+  query: string;
+  context: string;
+  answer: string;
+};
+
 type KnowledgeDocument = {
   id: string;
   title: string;
@@ -175,9 +181,13 @@ function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[
 function DocumentCard({
   doc,
   matchedTopics,
+  approvedKeys,
+  onApprove,
 }: {
   doc: KnowledgeDocument;
   matchedTopics: ColoredTopic[];
+  approvedKeys: Set<string>;
+  onApprove: (record: ApprovedRecord, key: string) => void;
 }) {
   const bodyBlocks = formatContent(getDocumentBody(doc.content));
   const qaPairs = doc.qaPairs ?? [];
@@ -208,6 +218,10 @@ function DocumentCard({
           );
         }
 
+        const qaKey = `${doc.id}-${matchingQA.span}`;
+        const approved = approvedKeys.has(qaKey);
+        const qaQuery = matchedTopics.find((t) => t.spans.includes(matchingQA.span))?.text ?? '';
+
         return (
           <View key={`${doc.id}-b${index}`} style={styles.qaRow}>
             <View style={styles.qaRowText}>
@@ -217,8 +231,28 @@ function DocumentCard({
             </View>
             <View style={[styles.qaDash, { borderColor: palette.border }]} />
             <View style={[styles.qaCard, { backgroundColor: palette.bg, borderColor: palette.border }]}>
-              <Text style={[styles.qaQuestion, { color: palette.text }]}>{matchingQA.question}</Text>
-              <Text style={styles.qaAnswer}>{matchingQA.answer}</Text>
+              <Text style={[styles.qaQuestion, { color: palette.text }]}>
+                <Text style={{ fontWeight: 'bold' }}>Q:</Text>{' '}
+                {matchingQA.question}
+              </Text>
+              <Text style={styles.qaAnswer}>
+                <Text style={{ fontWeight: 'bold' }}>A:</Text>{' '}
+                {matchingQA.answer}
+              </Text>
+              <Pressable
+                onPress={() =>
+                  onApprove(
+                    { query: qaQuery, context: matchingQA.span, answer: matchingQA.answer },
+                    qaKey
+                  )
+                }
+                disabled={approved}
+                style={approved ? styles.approveButtonApproved : [styles.approveButton, { backgroundColor: palette.border }]}
+              >
+                <Text style={approved ? styles.approveButtonApprovedText : [styles.approveButtonText, { color: palette.text }]}>
+                  {approved ? '✓ Approved' : 'Approve'}
+                </Text>
+              </Pressable>
             </View>
           </View>
         );
@@ -233,6 +267,8 @@ export default function App() {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [approvedRecords, setApprovedRecords] = useState<ApprovedRecord[]>([]);
+  const [approvedKeys, setApprovedKeys] = useState<Set<string>>(new Set());
 
   const arrowAnim = useRef(new Animated.Value(0)).current;
 
@@ -285,6 +321,46 @@ export default function App() {
     setSubmittedTopics([]);
     setDocuments([]);
     setError('');
+  }
+
+  function handleApprove(record: ApprovedRecord, key: string) {
+    setApprovedKeys((prev) => new Set([...prev, key]));
+    setApprovedRecords((prev) => {
+      if (prev.some((r) => r.query === record.query && r.context === record.context)) return prev;
+      return [...prev, record];
+    });
+  }
+
+  function openApprovedTable() {
+    const escape = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const rows = approvedRecords
+      .map(
+        (r) =>
+          `<tr><td>${escape(r.query)}</td><td>${escape(r.context)}</td><td>${escape(r.answer)}</td></tr>`
+      )
+      .join('');
+    const tableContent =
+      rows.length > 0
+        ? `<table><thead><tr><th>Query</th><th>Context</th><th>Answer</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<p class="empty">No golden dataset yet.</p>';
+    const html =
+      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>Golden Dataset</title>' +
+      '<style>body{font-family:sans-serif;padding:32px;background:#f6f8fb}' +
+      'h1{font-size:24px;margin-bottom:20px;color:#172033}' +
+      'table{border-collapse:collapse;width:100%;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}' +
+      'th{background:#F7F192;color:#111827;text-align:left;padding:12px 16px;font-size:14px}' +
+      'td{padding:10px 16px;border-bottom:1px solid #dde3ec;font-size:14px;color:#273244;vertical-align:top;word-break:break-word}' +
+      'tr:last-child td{border-bottom:none}tr:nth-child(even){background:#f6f8fb}' +
+      '.empty{color:#526071;font-size:15px;margin-top:16px}</style></head>' +
+      `<body><h1>Golden Dataset</h1>${tableContent}</body></html>`;
+    if (typeof window !== 'undefined') {
+      const win = window.open('', '_blank');
+      if (win) {
+        win.document.write(html);
+        win.document.close();
+      }
+    }
   }
 
   useEffect(() => {
@@ -415,10 +491,34 @@ export default function App() {
               const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
               return [{ text: topic, color: palette.bg, palette, spans }];
             });
-            return <DocumentCard key={doc.id} doc={doc} matchedTopics={matchedTopics} />;
+            return (
+              <DocumentCard
+                key={doc.id}
+                doc={doc}
+                matchedTopics={matchedTopics}
+                approvedKeys={approvedKeys}
+                onApprove={handleApprove}
+              />
+            );
           })
         )}
       </ScrollView>
+      {documents.length > 0 && (
+        <View style={styles.confirmFooter}>
+          <Pressable
+            onPress={openApprovedTable}
+            disabled={approvedRecords.length === 0}
+            style={[
+              styles.confirmButton,
+              approvedRecords.length === 0 && styles.confirmButtonDisabled,
+            ]}
+          >
+            <Text style={styles.confirmButtonText}>
+              {'Confirm' + (approvedRecords.length > 0 ? ` (${approvedRecords.length})` : '')}
+            </Text>
+          </Pressable>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -719,5 +819,53 @@ const styles = StyleSheet.create({
   },
   highlight: {
     color: '#111827',
+  },
+  approveButton: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#2563eb',
+    borderRadius: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  approveButtonApproved: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#d1fae5',
+    borderRadius: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  approveButtonText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  approveButtonApprovedText: {
+    color: '#065f46',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  confirmFooter: {
+    alignItems: 'flex-end',
+    backgroundColor: '#ffffff',
+    borderTopColor: '#dde3ec',
+    borderTopWidth: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  confirmButton: {
+    backgroundColor: '#F7F192',
+    borderRadius: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
+  confirmButtonDisabled: {
+    backgroundColor: '#aeb8c6',
+  },
+  confirmButtonText: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
