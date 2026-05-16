@@ -7,16 +7,21 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from supabase import create_client, Client
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(message)s")
 log = logging.getLogger("groundlens")
 
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 KNOWLEDGE_BASE_DIR = Path(__file__).resolve().parent.parent / "knowledge_base"
 
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 app = FastAPI()
 
 app.add_middleware(

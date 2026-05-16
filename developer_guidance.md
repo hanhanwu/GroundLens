@@ -15,6 +15,15 @@
 * Add environment variables to `~/.zshrc`
   * `export GROQ_API_KEY=gsk_your_key_here`
   * Then in the terminal, type `source ~/.zshrc`
+* Supabase setup
+  * Create a new project
+  * `pip install supabase`
+  * `cd frontend && npx expo install @supabase/supabase-js`
+  * Run supabase_sql.sql in supabase, enable RLS (row level security)
+  * Add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` in .env
+    * Project Settings --> API Keys --> Secret keys as `SUPABASE_SERVICE_ROLE_KEY`
+    * Project Settings --> API Keys --> Legacy anon, service_role API keys --> anon as `SUPABASE_ANON_KEY`
+    * Authentication --> Sign In / Providers --> Google --> Callbase URL remove "/auth/v1/callback"
 
 ## Test Local Website
 * `source .venv/bin/activate` to activate the virtual env if it's not activated
