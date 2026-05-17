@@ -13,6 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { supabase } from './lib/supabaseClient';
 
 type QAPair = {
   span: string;
@@ -261,7 +262,188 @@ function DocumentCard({
   );
 }
 
+function UploadPage({ onNext }: { onNext: () => void }) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'done'>('idle');
+  const [uploadedCount, setUploadedCount] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dropZoneRef = useRef<View>(null);
+
+  // Refs so the one-time DOM listeners always see the freshest values
+  const uploadStateRef = useRef(uploadState);
+  uploadStateRef.current = uploadState;
+  const startUploadRef = useRef<((f: File[]) => void) | null>(null);
+
+  const isIdle = uploadState === 'idle';
+  const isUploading = uploadState === 'uploading';
+  const isDone = uploadState === 'done';
+  const progressPct = files.length > 0 ? Math.round((uploadedCount / files.length) * 100) : 0;
+
+  // Native DOM drag listeners — bypasses React Native Web's synthetic event limitations.
+  // e.preventDefault() in dragover is REQUIRED by the browser to allow drops.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const el = dropZoneRef.current as unknown as HTMLElement;
+    if (!el) return;
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (uploadStateRef.current === 'idle') setIsDragging(true);
+    };
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      if (uploadStateRef.current === 'idle') setIsDragging(true);
+    };
+    const handleDragLeave = (e: DragEvent) => {
+      // Only clear when the cursor leaves the zone itself, not a child element
+      if (!el.contains(e.relatedTarget as Node)) setIsDragging(false);
+    };
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+      if (uploadStateRef.current !== 'idle') return;
+      const dropped = e.dataTransfer?.files;
+      if (dropped && dropped.length > 0) startUploadRef.current?.(Array.from(dropped));
+    };
+
+    el.addEventListener('dragover', handleDragOver);
+    el.addEventListener('dragenter', handleDragEnter);
+    el.addEventListener('dragleave', handleDragLeave);
+    el.addEventListener('drop', handleDrop);
+    return () => {
+      el.removeEventListener('dragover', handleDragOver);
+      el.removeEventListener('dragenter', handleDragEnter);
+      el.removeEventListener('dragleave', handleDragLeave);
+      el.removeEventListener('drop', handleDrop);
+    };
+  }, []); // attach once; state is read via refs
+
+  function startUpload(incoming: File[]) {
+    if (incoming.length === 0 || uploadStateRef.current !== 'idle') return;
+    setFiles(incoming);
+    doUpload(incoming);
+  }
+  // Keep ref current so the native drop handler always calls the latest version
+  startUploadRef.current = startUpload;
+
+  function pickFiles() {
+    if (uploadState !== 'idle' || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.onchange = (e) => {
+      const t = e.target as HTMLInputElement;
+      if (t.files && t.files.length > 0) startUpload(Array.from(t.files));
+    };
+    input.click();
+  }
+
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  async function doUpload(filesToUpload: File[]) {
+    setUploadState('uploading');
+    setUploadError(null);
+    let count = 0;
+    const errors: string[] = [];
+    for (const file of filesToUpload) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`${BACKEND_URL}/upload`, { method: 'POST', body: formData });
+        if (!res.ok) {
+          const body = await res.text();
+          errors.push(`${file.name}: HTTP ${res.status} — ${body}`);
+          console.error(`Upload failed for ${file.name}: HTTP ${res.status}`, body);
+        }
+      } catch (err) {
+        errors.push(`${file.name}: network error — ${err}`);
+        console.error(`Upload error for ${file.name}:`, err);
+      }
+      count++;
+      setUploadedCount(count);
+    }
+    if (errors.length > 0) setUploadError(errors.join('\n'));
+    setUploadState('done');
+  }
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <StatusBar style="dark" />
+      <View style={styles.topBar}>
+        <BrandLogo />
+      </View>
+      <ScrollView contentContainerStyle={styles.startContainer} keyboardShouldPersistTaps="handled">
+        <View style={styles.uploadHero}>
+          <Text style={styles.uploadHeroTitle}>Import Your Documents</Text>
+          <Text style={styles.uploadHeroSubtitle}>
+            Upload files to build your knowledge base
+          </Text>
+        </View>
+        <View
+          ref={dropZoneRef}
+          style={[styles.dropZone, isDragging && styles.dropZoneDragging]}
+        >
+          <View style={styles.dropZoneBody}>
+            {isIdle && (
+              <>
+                <View style={styles.uploadIconCircle}>
+                  <Text style={styles.dropZoneIcon}>↑</Text>
+                </View>
+                <Text style={styles.dropZoneTitle}>Drop files here</Text>
+                <Text style={styles.dropZoneOr}>or</Text>
+                <Pressable onPress={pickFiles} style={styles.browseButton}>
+                  <Text style={styles.browseButtonText}>Browse files</Text>
+                </Pressable>
+                <Text style={styles.dropZoneHint}>Any file format accepted</Text>
+              </>
+            )}
+            {isUploading && (
+              <>
+                <ActivityIndicator size="large" color="#16a34a" />
+                <Text style={styles.uploadingText}>
+                  Uploading… {uploadedCount} of {files.length}
+                </Text>
+              </>
+            )}
+            {isDone && (
+              <>
+                <Text style={styles.doneCheck}>{uploadError ? '✗' : '✓'}</Text>
+                <Text style={[styles.doneText, uploadError ? { color: '#dc2626' } : null]}>
+                  {uploadError
+                    ? `Some files failed to upload:\n${uploadError}`
+                    : 'All files uploaded successfully!'}
+                </Text>
+              </>
+            )}
+          </View>
+
+          {(isUploading || isDone) && (
+            <View style={styles.progressBarTrack}>
+              <View style={[styles.progressBarFill, { width: `${progressPct}%` }]} />
+            </View>
+          )}
+
+          <View style={styles.dropZoneFooter}>
+            <Pressable
+              onPress={onNext}
+              disabled={!isDone}
+              style={[styles.nextButton, !isDone && styles.nextButtonDisabled]}
+            >
+              <Text style={[styles.nextButtonText, !isDone && styles.nextButtonTextDisabled]}>
+                Specify Topics →
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
 export default function App() {
+  const [uploadDone, setUploadDone] = useState(false);
   const [topics, setTopics] = useState(['']);
   const [submittedTopics, setSubmittedTopics] = useState<string[]>([]);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
@@ -391,6 +573,10 @@ export default function App() {
       .finally(() => setIsLoading(false));
   }, [submittedTopics]);
 
+  if (!uploadDone) {
+    return <UploadPage onNext={() => setUploadDone(true)} />;
+  }
+
   if (submittedTopics.length === 0) {
     return (
       <SafeAreaView style={styles.screen}>
@@ -470,7 +656,7 @@ export default function App() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {isLoading ? (
           <View style={styles.centerState}>
-            <ActivityIndicator color="#2563eb" />
+            <ActivityIndicator color="#B8960C" />
             <Text style={styles.stateText}>Finding matching documents...</Text>
           </View>
         ) : error ? (
@@ -526,23 +712,26 @@ export default function App() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#f6f8fb',
+    backgroundColor: '#FFFDF7',
   },
   startContainer: {
     alignItems: 'center',
     flexGrow: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 24,
+    paddingVertical: 40,
   },
   topBar: {
     alignItems: 'flex-start',
+    borderBottomColor: '#F0E4A0',
+    borderBottomWidth: 1,
+    paddingBottom: 14,
     paddingHorizontal: 20,
     paddingTop: 14,
   },
   header: {
-    backgroundColor: '#ffffff',
-    borderBottomColor: '#dde3ec',
+    backgroundColor: '#FFFDF7',
+    borderBottomColor: '#F0E4A0',
     borderBottomWidth: 1,
     paddingHorizontal: 20,
     paddingBottom: 18,
@@ -646,8 +835,10 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     alignItems: 'center',
-    backgroundColor: '#2563eb',
+    backgroundColor: '#F7F192',
+    borderColor: '#C8A82C',
     borderRadius: 8,
+    borderWidth: 1,
     justifyContent: 'center',
     minHeight: 42,
     paddingHorizontal: 22,
@@ -656,7 +847,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#aeb8c6',
   },
   submitButtonText: {
-    color: '#ffffff',
+    color: '#111827',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -730,8 +921,8 @@ const styles = StyleSheet.create({
   },
   notice: {
     backgroundColor: '#ffffff',
-    borderColor: '#dde3ec',
-    borderRadius: 8,
+    borderColor: '#e8e3c8',
+    borderRadius: 10,
     borderWidth: 1,
     padding: 18,
   },
@@ -758,10 +949,15 @@ const styles = StyleSheet.create({
   },
   document: {
     backgroundColor: '#ffffff',
-    borderColor: '#dde3ec',
-    borderRadius: 8,
+    borderColor: '#e8e3c8',
+    borderRadius: 10,
     borderWidth: 1,
+    elevation: 2,
     padding: 20,
+    shadowColor: '#B8A030',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
   },
   documentTitle: {
     color: '#111827',
@@ -822,8 +1018,10 @@ const styles = StyleSheet.create({
   },
   approveButton: {
     alignSelf: 'flex-end',
-    backgroundColor: '#2563eb',
+    backgroundColor: '#F7F192',
+    borderColor: '#C8A82C',
     borderRadius: 6,
+    borderWidth: 1,
     marginTop: 8,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -848,15 +1046,17 @@ const styles = StyleSheet.create({
   },
   confirmFooter: {
     alignItems: 'flex-end',
-    backgroundColor: '#ffffff',
-    borderTopColor: '#dde3ec',
+    backgroundColor: '#FFFDF7',
+    borderTopColor: '#F0E4A0',
     borderTopWidth: 1,
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
   confirmButton: {
     backgroundColor: '#F7F192',
+    borderColor: '#C8A82C',
     borderRadius: 8,
+    borderWidth: 1,
     paddingHorizontal: 22,
     paddingVertical: 10,
   },
@@ -867,5 +1067,152 @@ const styles = StyleSheet.create({
     color: '#111827',
     fontSize: 15,
     fontWeight: '700',
+  },
+  // ── Upload page ──────────────────────────────────────────────
+  dropZone: {
+    alignSelf: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#E8D87A',
+    borderRadius: 14,
+    borderStyle: 'dashed',
+    borderWidth: 2,
+    elevation: 3,
+    maxWidth: 560,
+    minHeight: 240,
+    padding: 28,
+    shadowColor: '#C8A82C',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.10,
+    shadowRadius: 12,
+    width: '100%',
+  },
+  dropZoneDragging: {
+    backgroundColor: 'rgba(212, 160, 23, 0.06)',
+    borderColor: '#D4A017',
+  },
+  dropZoneBody: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    paddingVertical: 24,
+  },
+  dropZoneIcon: {
+    color: '#8B6914',
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  dropZoneTitle: {
+    color: '#172033',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  dropZoneOr: {
+    color: '#78818f',
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  browseButton: {
+    alignItems: 'center',
+    backgroundColor: '#F7F192',
+    borderColor: '#C8A82C',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
+  browseButtonText: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  uploadingText: {
+    color: '#526071',
+    fontSize: 15,
+    marginTop: 14,
+  },
+  doneCheck: {
+    color: '#16a34a',
+    fontSize: 48,
+    fontWeight: '800',
+  },
+  doneText: {
+    color: '#16a34a',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  progressBarTrack: {
+    backgroundColor: '#d1fae5',
+    borderRadius: 5,
+    height: 10,
+    marginTop: 20,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  progressBarFill: {
+    backgroundColor: '#16a34a',
+    borderRadius: 5,
+    height: 10,
+  },
+  dropZoneFooter: {
+    alignItems: 'flex-end',
+    marginTop: 16,
+  },
+  nextButton: {
+    alignItems: 'center',
+    backgroundColor: '#F7F192',
+    borderColor: '#C8A82C',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
+  nextButtonDisabled: {
+    backgroundColor: '#aeb8c6',
+  },
+  nextButtonText: {
+    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  nextButtonTextDisabled: {
+    color: '#e5e7eb',
+  },
+  uploadHero: {
+    alignItems: 'center',
+    marginBottom: 28,
+    maxWidth: 560,
+    width: '100%',
+  },
+  uploadHeroTitle: {
+    color: '#172033',
+    fontSize: 26,
+    fontWeight: '800',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  uploadHeroSubtitle: {
+    color: '#526071',
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+  },
+  uploadIconCircle: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(247, 241, 146, 0.40)',
+    borderColor: '#E8D87A',
+    borderRadius: 40,
+    borderWidth: 2,
+    height: 80,
+    justifyContent: 'center',
+    marginBottom: 16,
+    width: 80,
+  },
+  dropZoneHint: {
+    color: '#78818f',
+    fontSize: 12,
+    marginTop: 10,
   },
 });

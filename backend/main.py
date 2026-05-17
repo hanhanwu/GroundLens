@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 
@@ -44,6 +44,45 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok", "groq_key_set": bool(GROQ_API_KEY)}
+
+
+@app.post("/upload")
+async def upload_document(file: UploadFile):
+    """Save an uploaded file to knowledge_base/ and upsert it into Supabase."""
+    KNOWLEDGE_BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+    content_bytes = await file.read()
+    try:
+        text = content_bytes.decode('utf-8')
+    except UnicodeDecodeError:
+        text = content_bytes.decode('latin-1', errors='replace')
+
+    # Sanitise filename and always persist as .txt so the /documents endpoint picks it up
+    raw_name = (file.filename or 'document').strip()
+    base = raw_name.rsplit('.', 1)[0] if '.' in raw_name else raw_name
+    safe_base = ''.join(c if c.isalnum() or c in '-_ ' else '_' for c in base).strip('_') or 'document'
+    safe_name = safe_base + '.txt'
+    dest = KNOWLEDGE_BASE_DIR / safe_name
+    dest.write_text(text, encoding='utf-8')
+    log.info("Saved upload to %s (%d bytes)", dest, len(content_bytes))
+
+    # Upsert into Supabase documents table (title must be unique per schema)
+    title = next((line.strip() for line in text.splitlines() if line.strip()), safe_name)
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        log.warning("Supabase credentials not configured — skipping DB upsert")
+        return {'filename': safe_name, 'status': 'saved', 'db': 'skipped (no credentials)'}
+
+    try:
+        response = supabase.table('documents').upsert(
+            {'title': title, 'content': text, 'file_path': safe_name},
+            on_conflict='title',
+        ).execute()
+        log.info("Upserted '%s' into Supabase: %s", title, response)
+    except Exception as exc:
+        log.error("Supabase upsert failed for %s: %s", safe_name, exc)
+        raise HTTPException(status_code=500, detail=f"File saved locally but database upsert failed: {exc}")
+
+    return {'filename': safe_name, 'status': 'saved', 'db': 'upserted'}
 
 
 def _find_verbatim(span: str, content: str) -> str | None:
