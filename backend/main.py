@@ -111,7 +111,7 @@ async def find_spans_and_qa(
     prompt = (
         "You are a precise text-analysis assistant.\n"
         "Given a list of topics and a document, do the following:\n"
-        "1. For each topic, find up to 3 short verbatim excerpts from the document.\n"
+        "1. For each topic, find 1 short verbatim excerpt from the document.\n"
         "2. For every excerpt you found, add one entry to a special \"_qa\" key: "
         "a question the excerpt answers plus a concise 1-2 sentence answer.\n\n"
         "Rules:\n"

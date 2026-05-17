@@ -13,7 +13,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { supabase } from './lib/supabaseClient';
 
 type QAPair = {
   span: string;
@@ -475,14 +474,10 @@ export default function App() {
     });
   }
 
-  function addTopic(insertAfterIndex?: number) {
+  function addTopic(insertAfterIndex: number) {
     setTopics((currentTopics) => {
       const next = [...currentTopics];
-      if (typeof insertAfterIndex === 'number') {
-        next.splice(insertAfterIndex + 1, 0, '');
-      } else {
-        next.push('');
-      }
+      next.splice(insertAfterIndex + 1, 0, '');
       return next;
     });
   }
@@ -753,12 +748,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
   },
-  startPrompt: {
-    color: '#526071',
-    fontSize: 17,
-    lineHeight: 24,
-    marginBottom: 18,
-  },
   topicGroup: {
     maxWidth: 520,
     marginBottom: 14,
@@ -802,16 +791,6 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     width: '100%',
   },
-  addButton: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#b7c1cf',
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 42,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
   addIconButton: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
@@ -826,11 +805,6 @@ const styles = StyleSheet.create({
   addIconText: {
     color: '#172033',
     fontSize: 20,
-    fontWeight: '700',
-  },
-  addButtonText: {
-    color: '#172033',
-    fontSize: 15,
     fontWeight: '700',
   },
   submitButton: {
@@ -901,11 +875,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textTransform: 'uppercase',
   },
-  selectedTopic: {
-    color: '#172033',
-    fontSize: 18,
-    lineHeight: 25,
-  },
   content: {
     padding: 20,
     paddingBottom: 40,
@@ -936,16 +905,6 @@ const styles = StyleSheet.create({
     color: '#526071',
     fontSize: 15,
     lineHeight: 22,
-  },
-  topicResult: {
-    gap: 14,
-    marginBottom: 22,
-  },
-  topicResultTitle: {
-    color: '#172033',
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 28,
   },
   document: {
     backgroundColor: '#ffffff',
@@ -1012,9 +971,6 @@ const styles = StyleSheet.create({
     color: '#374151',
     fontSize: 12,
     lineHeight: 17,
-  },
-  highlight: {
-    color: '#111827',
   },
   approveButton: {
     alignSelf: 'flex-end',
