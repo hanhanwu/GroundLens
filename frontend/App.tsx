@@ -454,6 +454,7 @@ export default function App() {
   const [approvedKeys, setApprovedKeys] = useState<Set<string>>(new Set());
 
   const arrowAnim = useRef(new Animated.Value(0)).current;
+  const topicInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     const animation = Animated.loop(
@@ -472,10 +473,12 @@ export default function App() {
     const trimmed = topicInput.trim();
     if (!trimmed || taggedTopics.includes(trimmed)) {
       setTopicInput('');
+      setTimeout(() => topicInputRef.current?.focus(), 0);
       return;
     }
     setTaggedTopics((prev) => [...prev, trimmed]);
     setTopicInput('');
+    setTimeout(() => topicInputRef.current?.focus(), 0);
   }
 
   function removeTag(index: number) {
@@ -601,8 +604,10 @@ export default function App() {
           <View style={styles.tagInputCard}>
             <View style={styles.tagInputRow}>
               <TextInput
+                ref={topicInputRef}
                 autoCapitalize="none"
                 autoCorrect={false}
+                blurOnSubmit={false}
                 onChangeText={setTopicInput}
                 onSubmitEditing={addTag}
                 placeholder="e.g. Facebook campaigns"
