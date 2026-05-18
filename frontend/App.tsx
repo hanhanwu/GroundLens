@@ -21,6 +21,7 @@ type QAPair = {
 };
 
 type ApprovedRecord = {
+  topic: string;
   query: string;
   context: string;
   answer: string;
@@ -242,7 +243,7 @@ function DocumentCard({
               <Pressable
                 onPress={() =>
                   onApprove(
-                    { query: qaQuery, context: matchingQA.span, answer: matchingQA.answer },
+                    { topic: qaQuery, query: matchingQA.question, context: matchingQA.span, answer: matchingQA.answer },
                     qaKey
                   )
                 }
@@ -497,7 +498,7 @@ export default function App() {
   function handleApprove(record: ApprovedRecord, key: string) {
     setApprovedKeys((prev) => new Set([...prev, key]));
     setApprovedRecords((prev) => {
-      if (prev.some((r) => r.query === record.query && r.context === record.context)) return prev;
+      if (prev.some((r) => r.topic === record.topic && r.context === record.context)) return prev;
       return [...prev, record];
     });
   }
@@ -505,26 +506,43 @@ export default function App() {
   function openApprovedTable() {
     const escape = (s: string) =>
       s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const count = approvedRecords.length;
     const rows = approvedRecords
-      .map(
-        (r) =>
-          `<tr><td>${escape(r.query)}</td><td>${escape(r.context)}</td><td>${escape(r.answer)}</td></tr>`
-      )
+      .map((r) => {
+        const topicIdx = submittedTopics.indexOf(r.topic);
+        const palette = TOPIC_COLORS[(topicIdx >= 0 ? topicIdx : 0) % TOPIC_COLORS.length];
+        const badgeStyle = `background:${palette.bg};border-color:${palette.border};color:${palette.text}`;
+        return `<tr><td><span class="badge" style="${badgeStyle}">${escape(r.topic)}</span></td><td>${escape(r.query)}</td><td>${escape(r.context)}</td><td>${escape(r.answer)}</td></tr>`;
+      })
       .join('');
     const tableContent =
       rows.length > 0
-        ? `<table><thead><tr><th>Query</th><th>Context</th><th>Answer</th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<p class="empty">No golden dataset yet.</p>';
+        ? `<table><thead><tr><th class="col-topic">Topic</th><th class="col-query">Query</th><th class="col-context">Context</th><th class="col-answer">Answer</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="empty">No approved records yet.</div>';
+    const subtitle = `${count} approved record${count !== 1 ? 's' : ''}`;
     const html =
-      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>Golden Dataset</title>' +
-      '<style>body{font-family:sans-serif;padding:32px;background:#f6f8fb}' +
-      'h1{font-size:24px;margin-bottom:20px;color:#172033}' +
-      'table{border-collapse:collapse;width:100%;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}' +
-      'th{background:#F7F192;color:#111827;text-align:left;padding:12px 16px;font-size:14px}' +
-      'td{padding:10px 16px;border-bottom:1px solid #dde3ec;font-size:14px;color:#273244;vertical-align:top;word-break:break-word}' +
-      'tr:last-child td{border-bottom:none}tr:nth-child(even){background:#f6f8fb}' +
-      '.empty{color:#526071;font-size:15px;margin-top:16px}</style></head>' +
-      `<body><h1>Golden Dataset</h1>${tableContent}</body></html>`;
+      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>' +
+      '<title>Golden Dataset \u00b7 GroundLens</title>' +
+      '<style>' +
+      '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}' +
+      'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#FFFDF7;color:#172033;min-height:100vh}' +
+      '.topbar{background:#FFFDF7;border-bottom:1px solid #F0E4A0;padding:14px 32px;display:flex;align-items:center}' +
+      '.brand{font-size:22px;font-weight:800;color:#172033;letter-spacing:-0.3px}' +
+      '.container{max-width:1000px;margin:40px auto;padding:0 24px 60px}' +
+      '.page-title{font-size:26px;font-weight:800;color:#172033;margin-bottom:6px}' +
+      '.page-subtitle{font-size:15px;color:#526071;margin-bottom:28px}' +
+      '.card{background:#fff;border:1px solid #e8e3c8;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(184,160,48,0.10)}' +
+      'table{width:100%;border-collapse:collapse}' +
+      'thead th{background:#F7F192;color:#111827;text-align:left;padding:13px 18px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1.5px solid #C8A82C}' +
+      '.col-topic{width:12%}.col-query{width:22%}.col-context{width:40%}.col-answer{width:26%}' +
+      'td{padding:12px 18px;border-bottom:1px solid #e8e3c8;font-size:14px;color:#273244;vertical-align:top;word-break:break-word;line-height:1.6;background:#fff}' +
+      'tbody tr:nth-child(even) td{background:#FFFDF7}' +
+      'tbody tr:hover td{background:#FEF9C3;transition:background 0.12s}' +
+      'tbody tr:last-child td{border-bottom:none}' +
+      '.badge{display:inline-block;background:#FEF9C3;border:1px solid #EAB308;color:#78350F;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}' +
+      '.empty{text-align:center;padding:56px 24px;color:#526071;font-size:15px}' +
+      '</style></head>' +
+      `<body><div class="topbar"><span class="brand">GroundLens</span></div><div class="container"><div class="page-title">Golden Dataset</div><div class="page-subtitle">${subtitle}</div><div class="card">${tableContent}</div></div></body></html>`;
     if (typeof window !== 'undefined') {
       const win = window.open('', '_blank');
       if (win) {
