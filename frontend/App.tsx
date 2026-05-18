@@ -116,12 +116,12 @@ function BrandLogo() {
 }
 
 const TOPIC_COLORS: { bg: string; border: string; text: string }[] = [
-  { bg: 'rgba(255, 140, 50, 0.15)',  border: 'rgba(255, 140, 50, 0.45)',  text: '#7a3a00' },
-  { bg: 'rgba(99,  102, 241, 0.12)', border: 'rgba(99,  102, 241, 0.40)', text: '#2d2d80' },
-  { bg: 'rgba(16,  185, 129, 0.12)', border: 'rgba(16,  185, 129, 0.40)', text: '#065f46' },
-  { bg: 'rgba(236,  72, 153, 0.12)', border: 'rgba(236,  72, 153, 0.40)', text: '#7c1252' },
-  { bg: 'rgba(234, 179,   8, 0.13)', border: 'rgba(234, 179,   8, 0.42)', text: '#6b4c00' },
-  { bg: 'rgba(59,  130, 246, 0.12)', border: 'rgba(59,  130, 246, 0.40)', text: '#1e3a6e' },
+  { bg: '#FEF9C3', border: '#EAB308', text: '#78350F' }, // vivid yellow
+  { bg: '#FCE7F3', border: '#EC4899', text: '#831843' }, // vivid pink
+  { bg: '#CCFBF1', border: '#14B8A6', text: '#134E4A' }, // vivid teal
+  { bg: '#DBEAFE', border: '#3B82F6', text: '#1E3A8A' }, // vivid blue
+  { bg: '#F3E8FF', border: '#9333EA', text: '#581C87' }, // vivid purple
+  { bg: '#FFEDD5', border: '#F97316', text: '#7C2D12' }, // vivid orange
 ];
 
 type ColoredTopic = { text: string; color: string; palette: { bg: string; border: string; text: string }; spans: string[] };
@@ -395,7 +395,7 @@ function UploadPage({ onNext }: { onNext: () => void }) {
                 <Pressable onPress={pickFiles} style={styles.browseButton}>
                   <Text style={styles.browseButtonText}>Browse files</Text>
                 </Pressable>
-                <Text style={styles.dropZoneHint}>Any file format accepted</Text>
+                <Text style={styles.dropZoneHint}>Accept .txt files only</Text>
               </>
             )}
             {isUploading && (
@@ -443,7 +443,8 @@ function UploadPage({ onNext }: { onNext: () => void }) {
 
 export default function App() {
   const [uploadDone, setUploadDone] = useState(false);
-  const [topics, setTopics] = useState(['']);
+  const [topicInput, setTopicInput] = useState('');
+  const [taggedTopics, setTaggedTopics] = useState<string[]>([]);
   const [submittedTopics, setSubmittedTopics] = useState<string[]>([]);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -464,38 +465,31 @@ export default function App() {
     return () => animation.stop();
   }, [arrowAnim]);
 
-  const canSubmit = topics.some((topic) => topic.trim().length > 0);
+  const canSubmit = taggedTopics.length > 0;
 
-  function updateTopic(index: number, text: string) {
-    setTopics((currentTopics) => {
-      const nextTopics = [...currentTopics];
-      nextTopics[index] = text;
-      return nextTopics;
-    });
+  function addTag() {
+    const trimmed = topicInput.trim();
+    if (!trimmed || taggedTopics.includes(trimmed)) {
+      setTopicInput('');
+      return;
+    }
+    setTaggedTopics((prev) => [...prev, trimmed]);
+    setTopicInput('');
   }
 
-  function addTopic(insertAfterIndex: number) {
-    setTopics((currentTopics) => {
-      const next = [...currentTopics];
-      next.splice(insertAfterIndex + 1, 0, '');
-      return next;
-    });
+  function removeTag(index: number) {
+    setTaggedTopics((prev) => prev.filter((_, i) => i !== index));
   }
 
   function submitTopic() {
-    const nextTopics = topics
-      .map((topic) => topic.trim())
-      .filter(Boolean);
-
-    if (nextTopics.length === 0) {
-      return;
-    }
-
-    setSubmittedTopics(nextTopics);
+    if (taggedTopics.length === 0) return;
+    setSubmittedTopics(taggedTopics);
   }
 
   function editTopics() {
     setSubmittedTopics([]);
+    setTaggedTopics([]);
+    setTopicInput('');
     setDocuments([]);
     setError('');
   }
@@ -580,40 +574,55 @@ export default function App() {
           <BrandLogo />
         </View>
         <ScrollView contentContainerStyle={styles.startContainer} keyboardShouldPersistTaps="handled">
-          {topics.map((topic, index) => (
-            <View key={index} style={styles.topicGroup}>
-              <View style={styles.topicRow}>
-                <Text style={styles.topicLabel}>Topic {index + 1}</Text>
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onChangeText={(text) => updateTopic(index, text)}
-                  onSubmitEditing={submitTopic}
-                  placeholder="Create targeted campaigns for Facebook"
-                  placeholderTextColor="#78818f"
-                  returnKeyType="search"
-                  style={styles.input}
-                  value={topic}
-                />
-                <Pressable
-                  accessibilityLabel="Add topic"
-                  onPress={() => addTopic(index)}
-                  style={[styles.addIconButton, index !== topics.length - 1 && { opacity: 0 }]}
-                  disabled={index !== topics.length - 1}
-                  pointerEvents={index !== topics.length - 1 ? 'none' : 'auto'}
-                >
-                  <Text style={styles.addIconText}>+</Text>
-                </Pressable>
-              </View>
+          <View style={styles.uploadHero}>
+            <Text style={styles.uploadHeroTitle}>Specify Your Topics</Text>
+            <Text style={styles.uploadHeroSubtitle}>
+              Type a topic and press Enter or + to add it as a tag
+            </Text>
+          </View>
+          <View style={styles.tagInputCard}>
+            <View style={styles.tagInputRow}>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setTopicInput}
+                onSubmitEditing={addTag}
+                placeholder="e.g. Facebook campaigns"
+                placeholderTextColor="#78818f"
+                returnKeyType="done"
+                style={styles.tagTextInput}
+                value={topicInput}
+              />
+              <Pressable onPress={addTag} style={styles.tagAddButton}>
+                <Text style={styles.tagAddButtonText}>+</Text>
+              </Pressable>
             </View>
-          ))}
+            {taggedTopics.length > 0 && (
+              <View style={styles.tagList}>
+                {taggedTopics.map((tag, i) => {
+                  const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
+                  return (
+                    <View
+                      key={`${tag}-${i}`}
+                      style={[styles.tagChip, { backgroundColor: palette.bg, borderColor: palette.border }]}
+                    >
+                      <Text style={[styles.tagChipText, { color: palette.text }]}>{tag}</Text>
+                      <Pressable onPress={() => removeTag(i)} style={styles.tagRemoveBtn}>
+                        <Text style={[styles.tagRemoveBtnText, { color: palette.text }]}>×</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
           <View style={styles.actionRow}>
             <Pressable
               disabled={!canSubmit}
               onPress={submitTopic}
               style={[styles.submitButton, !canSubmit && styles.submitButtonDisabled]}
             >
-              <Text style={styles.submitButtonText}>Submit</Text>
+              <Text style={[styles.submitButtonText, !canSubmit && { color: '#e5e7eb' }]}>Submit →</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -748,39 +757,82 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
   },
-  topicGroup: {
-    maxWidth: 520,
-    marginBottom: 14,
-    width: '100%',
+  tagInputCard: {
     alignSelf: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#E8D87A',
+    borderRadius: 14,
+    borderWidth: 1,
+    maxWidth: 520,
+    padding: 20,
+    shadowColor: '#C8A82C',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 2,
+    width: '100%',
+    marginBottom: 16,
   },
-  topicRow: {
+  tagInputRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: 10,
-    width: '100%',
-    maxWidth: 520,
-    alignSelf: 'center',
   },
-  topicLabel: {
-    color: '#172033',
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 8,
-    marginRight: 6,
-  },
-  input: {
-    backgroundColor: '#ffffff',
-    borderColor: '#b7c1cf',
+  tagTextInput: {
+    backgroundColor: '#FFFDF7',
+    borderColor: '#D4C66A',
     borderRadius: 8,
     borderWidth: 1,
     color: '#172033',
-    fontSize: 17,
+    flex: 1,
+    fontSize: 16,
     minHeight: 48,
     paddingHorizontal: 14,
-    flex: 1,
-    minWidth: 0,
-    maxWidth: '100%',
+  },
+  tagAddButton: {
+    alignItems: 'center',
+    backgroundColor: '#F7F192',
+    borderColor: '#C8A82C',
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 48,
+    justifyContent: 'center',
+    width: 48,
+  },
+  tagAddButtonText: {
+    color: '#7A4500',
+    fontSize: 26,
+    fontWeight: '700',
+    lineHeight: 30,
+  },
+  tagList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 16,
+  },
+  tagChip: {
+    alignItems: 'center',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  tagChipText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  tagRemoveBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 2,
+  },
+  tagRemoveBtnText: {
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   actionRow: {
     alignItems: 'center',
@@ -790,22 +842,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     maxWidth: 520,
     width: '100%',
-  },
-  addIconButton: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#b7c1cf',
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 42,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    marginLeft: 8,
-  },
-  addIconText: {
-    color: '#172033',
-    fontSize: 20,
-    fontWeight: '700',
   },
   submitButton: {
     alignItems: 'center',
