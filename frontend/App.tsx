@@ -1058,7 +1058,7 @@ export default function App() {
             </Animated.Text>
           ))}
           <Animated.Text style={[styles.completionTitle, { transform: [{ scale: celebScale }], opacity: celebOpacity }]}>
-            All done!
+            All Done!
           </Animated.Text>
           <Animated.Text style={[styles.completionSubtitle, { opacity: celebOpacity }]}>
             {approvedRecords.length} Q&A pair{approvedRecords.length !== 1 ? 's' : ''} approved
