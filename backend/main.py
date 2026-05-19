@@ -177,6 +177,9 @@ async def find_spans_and_qa(
             log.debug("doc=%s topic=%r => spans: %s", doc_id, topic, result_spans[topic])
 
         # --- Parse Q&A (_qa key in same flat object) ---
+        # Build a set of verified spans (already original-cased) for fast lookup
+        verified_span_set = {s for spans in result_spans.values() for s in spans}
+
         qa_raw = parsed.get("_qa", [])
         result_qa: list[dict] = []
         if isinstance(qa_raw, list):
@@ -187,8 +190,19 @@ async def find_spans_and_qa(
                     and isinstance(item.get("question"), str)
                     and isinstance(item.get("answer"), str)
                 ):
+                    # Verify span against document; use original-cased version so it
+                    # matches both the content blocks and the spanToPalette keys in the UI.
+                    verified_span = _find_verbatim(item["span"], content)
+                    if not verified_span:
+                        log.debug("QA span not found in doc=%s span=%r", doc_id, item["span"])
+                        continue
+                    # Only keep Q&A whose span was also selected as a topic span,
+                    # so the palette lookup in the frontend always succeeds.
+                    if verified_span not in verified_span_set:
+                        log.debug("QA span not in topic spans, skipping doc=%s span=%r", doc_id, verified_span)
+                        continue
                     result_qa.append({
-                        "span": item["span"],
+                        "span": verified_span,
                         "question": item["question"],
                         "answer": item["answer"],
                     })

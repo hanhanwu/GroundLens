@@ -35,6 +35,14 @@ type KnowledgeDocument = {
   qaPairs: QAPair[];
 };
 
+type ReviewItem = {
+  topic: string;
+  topicIndex: number;
+  doc: KnowledgeDocument;
+  qaPair: QAPair;
+  palette: { bg: string; border: string; text: string };
+};
+
 type BatchDocumentsResponse = {
   documents: KnowledgeDocument[];
 };
@@ -452,6 +460,9 @@ export default function App() {
   const [error, setError] = useState('');
   const [approvedRecords, setApprovedRecords] = useState<ApprovedRecord[]>([]);
   const [approvedKeys, setApprovedKeys] = useState<Set<string>>(new Set());
+  const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
+  // Maps each topic to a stable color index based on insertion order, unaffected by drag-reorder
+  const [topicColorMap, setTopicColorMap] = useState<Record<string, number>>({});
 
   const arrowAnim = useRef(new Animated.Value(0)).current;
   const topicInputRef = useRef<TextInput>(null);
@@ -524,6 +535,7 @@ export default function App() {
       return;
     }
     setTaggedTopics((prev) => [...prev, trimmed]);
+    setTopicColorMap((prev) => trimmed in prev ? prev : { ...prev, [trimmed]: Object.keys(prev).length });
     setTopicInput('');
     setTimeout(() => topicInputRef.current?.focus(), 0);
   }
@@ -543,6 +555,7 @@ export default function App() {
     setTopicInput('');
     setDocuments([]);
     setError('');
+    setCurrentReviewIndex(0);
   }
 
   function handleApprove(record: ApprovedRecord, key: string) {
@@ -551,6 +564,11 @@ export default function App() {
       if (prev.some((r) => r.topic === record.topic && r.context === record.context)) return prev;
       return [...prev, record];
     });
+    setCurrentReviewIndex((i) => i + 1);
+  }
+
+  function handleSkip() {
+    setCurrentReviewIndex((i) => i + 1);
   }
 
   function openApprovedTable() {
@@ -559,8 +577,7 @@ export default function App() {
     const count = approvedRecords.length;
     const rows = approvedRecords
       .map((r) => {
-        const topicIdx = submittedTopics.indexOf(r.topic);
-        const palette = TOPIC_COLORS[(topicIdx >= 0 ? topicIdx : 0) % TOPIC_COLORS.length];
+        const palette = TOPIC_COLORS[(topicColorMap[r.topic] ?? submittedTopics.indexOf(r.topic)) % TOPIC_COLORS.length];
         const badgeStyle = `background:${palette.bg};border-color:${palette.border};color:${palette.text}`;
         return `<tr><td><span class="badge" style="${badgeStyle}">${escape(r.topic)}</span></td><td>${escape(r.query)}</td><td>${escape(r.context)}</td><td>${escape(r.answer)}</td></tr>`;
       })
@@ -630,6 +647,17 @@ export default function App() {
       .finally(() => setIsLoading(false));
   }, [submittedTopics]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const timer = setTimeout(() => {
+      if (typeof document !== 'undefined') {
+        const el = document.getElementById('qa-highlight-active') as HTMLElement | null;
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [currentReviewIndex, documents]);
+
   if (!uploadDone) {
     return <UploadPage onNext={() => setUploadDone(true)} />;
   }
@@ -674,7 +702,7 @@ export default function App() {
                   <Text style={styles.dragHint}>drag to reorder</Text>
                 </View>
                 {taggedTopics.map((tag, i) => {
-                  const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
+                  const palette = TOPIC_COLORS[(topicColorMap[tag] ?? i) % TOPIC_COLORS.length];
                   const isDragging = draggingIndex === i;
                   const isDragOver = dragOverIndex === i && draggingIndex !== i;
                   return (
@@ -736,11 +764,11 @@ export default function App() {
             <View style={[
               styles.tagChip,
               {
-                backgroundColor: TOPIC_COLORS[draggingIndex % TOPIC_COLORS.length].bg,
-                borderColor: TOPIC_COLORS[draggingIndex % TOPIC_COLORS.length].border,
+                backgroundColor: TOPIC_COLORS[(topicColorMap[taggedTopics[draggingIndex]] ?? draggingIndex) % TOPIC_COLORS.length].bg,
+                borderColor: TOPIC_COLORS[(topicColorMap[taggedTopics[draggingIndex]] ?? draggingIndex) % TOPIC_COLORS.length].border,
               }
             ]}>
-              <Text style={[styles.tagChipText, { color: TOPIC_COLORS[draggingIndex % TOPIC_COLORS.length].text }]}>
+              <Text style={[styles.tagChipText, { color: TOPIC_COLORS[(topicColorMap[taggedTopics[draggingIndex]] ?? draggingIndex) % TOPIC_COLORS.length].text }]}>
                 {taggedTopics[draggingIndex]}
               </Text>
             </View>
@@ -750,85 +778,208 @@ export default function App() {
     );
   }
 
+  // Build flat review queue ordered by topic priority
+  const reviewItems: ReviewItem[] = [];
+  if (documents.length > 0) {
+    for (let ti = 0; ti < submittedTopics.length; ti++) {
+      const topic = submittedTopics[ti];
+      for (const doc of documents) {
+        const spans = doc.topicSpans[topic] ?? [];
+        const qa = (doc.qaPairs ?? []).find((qa) => spans.includes(qa.span));
+        if (qa) {
+          reviewItems.push({
+            topic,
+            topicIndex: ti,
+            doc,
+            qaPair: qa,
+            palette: TOPIC_COLORS[(topicColorMap[topic] ?? ti) % TOPIC_COLORS.length],
+          });
+        }
+      }
+    }
+  }
+
+  const currentItem = reviewItems[currentReviewIndex] ?? null;
+  const allReviewDone =
+    !isLoading && !error && documents.length > 0 &&
+    reviewItems.length > 0 && currentReviewIndex >= reviewItems.length;
+  const noQAPairs = !isLoading && !error && documents.length > 0 && reviewItems.length === 0;
+  const currentTopicIndex = currentItem?.topicIndex ?? (allReviewDone ? submittedTopics.length : 0);
+
+  // Combine title + body into one list so a span in the title also gets a Q&A card
+  const allBlocks: ContentBlock[] = currentItem ? [
+    { kind: 'heading' as const, text: currentItem.doc.title },
+    ...formatContent(getDocumentBody(currentItem.doc.content)),
+  ] : [];
+  // Only the FIRST block containing the span shows the Q&A card
+  const activeBlockIndex = currentItem
+    ? allBlocks.findIndex((b) => b.text.includes(currentItem.qaPair.span))
+    : -1;
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar style="dark" />
-      <View style={styles.header}>
-        <BrandLogo />
-        <View style={styles.selectedTopicsRow}>
-          <Text style={styles.selectedTopicLabel}>Selected topics</Text>
-          <View style={styles.selectedTopicsChips}>
-            {submittedTopics.map((topic, i) => {
-              const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
-              return (
-                <View
-                  key={topic}
-                  style={[styles.topicChip, { backgroundColor: palette.bg, borderColor: palette.border }]}
+
+      {/* Review header: logo + edit button + topic progress */}
+      <View style={styles.reviewHeader}>
+        <View style={styles.reviewHeaderTop}>
+          <BrandLogo />
+          <Pressable accessibilityLabel="Edit topics" onPress={editTopics} style={styles.editTopicsButton}>
+            <Animated.Text style={[styles.editTopicsArrow, { transform: [{ translateX: arrowAnim }] }]}>←</Animated.Text>
+            <Text style={styles.editTopicsButtonText}>Edit Topics</Text>
+          </Pressable>
+        </View>
+        <View style={styles.topicProgressRow}>
+          {submittedTopics.map((topic, i) => {
+            const palette = TOPIC_COLORS[(topicColorMap[topic] ?? i) % TOPIC_COLORS.length];
+            const isCompleted = allReviewDone || i < currentTopicIndex;
+            const isActive = !allReviewDone && i === currentTopicIndex;
+            const isUpcoming = !allReviewDone && i > currentTopicIndex;
+            return (
+              <View
+                key={`prog-${i}`}
+                style={[
+                  styles.progressTag,
+                  isUpcoming
+                    ? styles.progressTagGray
+                    : { backgroundColor: palette.bg, borderColor: palette.border },
+                  isActive && styles.progressTagActive,
+                ]}
+              >
+                {isCompleted && (
+                  <Text style={[styles.progressTagIcon, { color: palette.text }]}>✓ </Text>
+                )}
+                {isActive && (
+                  <Text style={[styles.progressTagIcon, { color: palette.text }]}>● </Text>
+                )}
+                <Text
+                  style={[
+                    styles.progressTagText,
+                    isUpcoming ? styles.progressTagTextGray : { color: palette.text },
+                  ]}
                 >
-                  <Text style={[styles.topicChipText, { color: palette.text }]}>{topic}</Text>
-                </View>
-              );
-            })}
-            <Pressable accessibilityLabel="Edit topics" onPress={editTopics} style={styles.editTopicsButton}>
-              <Animated.Text style={[styles.editTopicsArrow, { transform: [{ translateX: arrowAnim }] }]}>←</Animated.Text>
-              <Text style={styles.editTopicsButtonText}>Edit Topics</Text>
-            </Pressable>
-          </View>
+                  {topic}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {isLoading ? (
-          <View style={styles.centerState}>
-            <ActivityIndicator color="#B8960C" />
-            <Text style={styles.stateText}>Finding matching documents...</Text>
-          </View>
-        ) : error ? (
-          <View style={styles.notice}>
-            <Text style={styles.noticeTitle}>Connection issue</Text>
-            <Text style={styles.noticeText}>{error}</Text>
-          </View>
-        ) : documents.length === 0 ? (
-          <View style={styles.notice}>
-            <Text style={styles.noticeTitle}>No matching document</Text>
-            <Text style={styles.noticeText}>Try other topics from the knowledge base.</Text>
-          </View>
-        ) : (
-          documents.map((doc) => {
-            const matchedTopics: ColoredTopic[] = submittedTopics.flatMap((topic, i) => {
-              const spans = doc.topicSpans[topic] ?? [];
-              if (spans.length === 0) return [];
-              const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
-              return [{ text: topic, color: palette.bg, palette, spans }];
-            });
-            return (
-              <DocumentCard
-                key={doc.id}
-                doc={doc}
-                matchedTopics={matchedTopics}
-                approvedKeys={approvedKeys}
-                onApprove={handleApprove}
-              />
-            );
-          })
-        )}
-      </ScrollView>
-      {documents.length > 0 && (
-        <View style={styles.confirmFooter}>
+      {/* Body */}
+      {isLoading ? (
+        <View style={styles.centerState}>
+          <ActivityIndicator color="#B8960C" />
+          <Text style={styles.stateText}>Finding matching documents...</Text>
+        </View>
+      ) : error ? (
+        <View style={[styles.notice, { margin: 20 }]}>
+          <Text style={styles.noticeTitle}>Connection issue</Text>
+          <Text style={styles.noticeText}>{error}</Text>
+        </View>
+      ) : documents.length === 0 ? (
+        <View style={[styles.notice, { margin: 20 }]}>
+          <Text style={styles.noticeTitle}>No matching document</Text>
+          <Text style={styles.noticeText}>Try other topics from the knowledge base.</Text>
+        </View>
+      ) : noQAPairs ? (
+        <View style={[styles.notice, { margin: 20 }]}>
+          <Text style={styles.noticeTitle}>No Q&A pairs found</Text>
+          <Text style={styles.noticeText}>Documents matched but no Q&A could be generated. Try different topics.</Text>
+        </View>
+      ) : allReviewDone ? (
+        <View style={styles.completionScreen}>
+          <Text style={styles.completionTitle}>All done!</Text>
+          <Text style={styles.completionSubtitle}>
+            {approvedRecords.length} Q&A pair{approvedRecords.length !== 1 ? 's' : ''} approved
+          </Text>
           <Pressable
             onPress={openApprovedTable}
             disabled={approvedRecords.length === 0}
-            style={[
-              styles.confirmButton,
-              approvedRecords.length === 0 && styles.confirmButtonDisabled,
-            ]}
+            style={[styles.confirmButton, approvedRecords.length === 0 && styles.confirmButtonDisabled]}
           >
-            <Text style={styles.confirmButtonText}>
-              {'Confirm' + (approvedRecords.length > 0 ? ` (${approvedRecords.length})` : '')}
-            </Text>
+            <Text style={styles.confirmButtonText}>View Dataset →</Text>
           </Pressable>
         </View>
-      )}
+      ) : currentItem ? (
+        <ScrollView style={styles.reviewScroll} contentContainerStyle={styles.reviewScrollContent}>
+          {allBlocks.map((block, index) => {
+            const isActiveBlock = index === activeBlockIndex;
+            const textStyle = index === 0
+              ? styles.documentTitle
+              : block.kind === 'heading' ? styles.sectionHeading : styles.paragraph;
+            const activeTopics = [{
+              text: currentItem.topic,
+              color: currentItem.palette.bg,
+              palette: currentItem.palette,
+              spans: [currentItem.qaPair.span],
+            }];
+
+            if (!isActiveBlock) {
+              return (
+                <Text key={`rb-${index}`} style={textStyle}>
+                  <HighlightedText text={block.text} topics={activeTopics} />
+                </Text>
+              );
+            }
+
+            return (
+              <View key={`rb-${index}`} nativeID="qa-highlight-active" style={styles.inlineQARow}>
+                <View style={styles.inlineQAText}>
+                  <Text style={[textStyle, { marginBottom: 0, marginTop: 0 }]}>
+                    <HighlightedText text={block.text} topics={activeTopics} />
+                  </Text>
+                </View>
+                <View style={[styles.inlineQADash, { borderColor: currentItem.palette.border }]} />
+                <View style={[styles.inlineQACard, { backgroundColor: currentItem.palette.bg, borderColor: currentItem.palette.border }]}>
+                  <Text style={[styles.qaReviewProgress, { color: currentItem.palette.text }]}>
+                    {currentReviewIndex + 1} / {reviewItems.length}
+                  </Text>
+                  <View style={[styles.qaReviewTopicBadge, { borderColor: currentItem.palette.border }]}>
+                    <Text style={[styles.qaReviewTopicText, { color: currentItem.palette.text }]}>
+                      {currentItem.topic}
+                    </Text>
+                  </View>
+                  <Text style={[styles.qaReviewQuestion, { color: currentItem.palette.text }]}>
+                    <Text style={{ fontWeight: 'bold' }}>Q: </Text>
+                    {currentItem.qaPair.question}
+                  </Text>
+                  <Text style={styles.qaReviewAnswer}>
+                    <Text style={{ fontWeight: 'bold' }}>A: </Text>
+                    {currentItem.qaPair.answer}
+                  </Text>
+                  <View style={styles.qaReviewButtons}>
+                    <Pressable onPress={handleSkip} style={styles.skipButton}>
+                      <Text style={styles.skipButtonText}>Skip</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() =>
+                        handleApprove(
+                          {
+                            topic: currentItem.topic,
+                            query: currentItem.qaPair.question,
+                            context: currentItem.qaPair.span,
+                            answer: currentItem.qaPair.answer,
+                          },
+                          `${currentItem.doc.id}-${currentItem.qaPair.span}`
+                        )
+                      }
+                      style={[styles.qaApproveButton, { backgroundColor: currentItem.palette.border }]}
+                    >
+                      <Text style={styles.qaApproveButtonText}>Approve</Text>
+                    </Pressable>
+                  </View>
+                  {approvedRecords.filter((r) => r.topic === currentItem.topic).length > 0 && (
+                    <Text style={styles.topicApprovedCount}>
+                      {approvedRecords.filter((r) => r.topic === currentItem.topic).length} approved for this topic
+                    </Text>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1386,5 +1537,172 @@ const styles = StyleSheet.create({
     color: '#78818f',
     fontSize: 12,
     marginTop: 10,
+  },
+  // ── Review page ──────────────────────────────────────────────
+  reviewHeader: {
+    backgroundColor: '#FFFDF7',
+    borderBottomColor: '#F0E4A0',
+    borderBottomWidth: 1,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    paddingTop: 14,
+  },
+  reviewHeaderTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  topicProgressRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  progressTag: {
+    alignItems: 'center',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  progressTagGray: {
+    backgroundColor: '#f1f3f5',
+    borderColor: '#ced4da',
+  },
+  progressTagActive: {
+    borderWidth: 2,
+  },
+  progressTagIcon: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  progressTagText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  progressTagTextGray: {
+    color: '#868e96',
+  },
+  reviewScroll: {
+    flex: 1,
+  },
+  reviewScrollContent: {
+    paddingHorizontal: 28,
+    paddingBottom: 60,
+    paddingTop: 24,
+  },
+  inlineQARow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  inlineQAText: {
+    flex: 3,
+  },
+  inlineQADash: {
+    alignSelf: 'center',
+    borderStyle: 'dashed',
+    borderTopWidth: 1.5,
+    marginHorizontal: 6,
+    width: 18,
+  },
+  inlineQACard: {
+    borderRadius: 10,
+    borderStyle: 'dashed',
+    borderWidth: 1.5,
+    flex: 2,
+    padding: 12,
+  },
+  qaReviewCard: {
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    borderWidth: 1.5,
+    padding: 16,
+  },
+  qaReviewProgress: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 10,
+    opacity: 0.7,
+    textAlign: 'right',
+  },
+  qaReviewTopicBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  qaReviewTopicText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  qaReviewQuestion: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 10,
+  },
+  qaReviewAnswer: {
+    color: '#374151',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 14,
+  },
+  qaReviewButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
+  skipButton: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#ced4da',
+    borderRadius: 6,
+    borderWidth: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  skipButtonText: {
+    color: '#526071',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  qaApproveButton: {
+    alignItems: 'center',
+    borderRadius: 6,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+  },
+  qaApproveButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  topicApprovedCount: {
+    color: '#526071',
+    fontSize: 12,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  completionScreen: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 16,
+    justifyContent: 'center',
+    padding: 40,
+  },
+  completionTitle: {
+    color: '#172033',
+    fontSize: 32,
+    fontWeight: '800',
+  },
+  completionSubtitle: {
+    color: '#526071',
+    fontSize: 16,
+    marginBottom: 8,
   },
 });
