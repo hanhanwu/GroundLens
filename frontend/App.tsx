@@ -127,14 +127,29 @@ function BrandLogo() {
 
 // Fireworks burst particles for the completion celebration
 const FIREWORK_PARTICLES = [
-  { emoji: '🎉', tx: -180, ty: -280, delay: 0 },
-  { emoji: '🥳', tx: -100, ty: -320, delay: 50 },
-  { emoji: '💯', tx:  -10, ty: -340, delay: 20 },
-  { emoji: '🎊', tx:   80, ty: -325, delay: 70 },
-  { emoji: '👏', tx:  165, ty: -285, delay: 30 },
-  { emoji: '🍾', tx: -145, ty: -250, delay: 100 },
-  { emoji: '✨', tx:   20, ty: -260, delay: 45 },
-  { emoji: '🏆', tx:  120, ty: -245, delay: 85 },
+  // inner ring
+  { emoji: '🎉', tx: -200, ty: -290, delay:   0 },
+  { emoji: '🥳', tx: -120, ty: -335, delay:  50 },
+  { emoji: '💯', tx:  -25, ty: -355, delay:  20 },
+  { emoji: '🎊', tx:   65, ty: -345, delay:  70 },
+  { emoji: '👏', tx:  155, ty: -305, delay:  30 },
+  { emoji: '🍾', tx:  220, ty: -265, delay:  90 },
+  // mid ring
+  { emoji: '✨', tx: -255, ty: -240, delay: 110 },
+  { emoji: '🏆', tx: -165, ty: -195, delay:  60 },
+  { emoji: '🎉', tx:   10, ty: -235, delay:  45 },
+  { emoji: '🎊', tx:  130, ty: -205, delay:  80 },
+  { emoji: '✨', tx:  215, ty: -215, delay:  15 },
+  { emoji: '💯', tx:  265, ty: -165, delay: 130 },
+  // outer scatter
+  { emoji: '🥳', tx: -285, ty: -155, delay: 140 },
+  { emoji: '🎉', tx: -225, ty: -365, delay:  35 },
+  { emoji: '🍾', tx:   90, ty: -375, delay:  65 },
+  { emoji: '👏', tx:  180, ty: -355, delay: 100 },
+  { emoji: '✨', tx:  -80, ty: -175, delay: 120 },
+  { emoji: '🏆', tx:  245, ty: -130, delay: 155 },
+  { emoji: '🎊', tx: -315, ty: -220, delay:  75 },
+  { emoji: '💯', tx:  305, ty: -250, delay:  40 },
 ] as const;
 
 const TOPIC_COLORS: { bg: string; border: string; text: string }[] = [
@@ -540,15 +555,18 @@ export default function App() {
           // Phase 1 — quick upward launch from center
           Animated.parallel([
             Animated.timing(r.op, { toValue: 1, duration: 80, useNativeDriver: true }),
-            Animated.timing(r.y, { toValue: -120, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+            Animated.timing(r.y, { toValue: -100, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true }),
           ]),
-          // Phase 2 — burst outward to final position
+          // Phase 2 — burst outward to peak position
           Animated.parallel([
             Animated.timing(r.y, { toValue: cfg.ty, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
             Animated.timing(r.x, { toValue: cfg.tx, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
           ]),
-          // Phase 3 — fade out
-          Animated.timing(r.op, { toValue: 0, duration: 500, useNativeDriver: true }),
+          // Phase 3 — gravity drop + fade out
+          Animated.parallel([
+            Animated.timing(r.y, { toValue: cfg.ty + 380, duration: 650, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+            Animated.timing(r.op, { toValue: 0, duration: 650, useNativeDriver: true }),
+          ]),
         ]);
       }),
     ]).start();
