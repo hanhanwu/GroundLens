@@ -32,6 +32,7 @@ create table qa_pairs (
   highlight_id uuid references highlights(id) on delete cascade,
   question     text not null,
   answer       text not null,
+  user_answer  text,                    -- Reviewer-edited answer; null means no edit yet
   created_at   timestamptz default now(),
   unique (highlight_id, question)
 );
@@ -43,7 +44,8 @@ create table golden_dataset (
   context      text not null,
   answer       text not null,
   source_doc_id uuid references documents(id) on delete set null,
-  approved_at  timestamptz default now()
+  approved_at  timestamptz default now(),
+  unique (query, context)
 );
 
 create policy "allow all" on documents      for all using (true) with check (true);

@@ -7,6 +7,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from supabase import create_client, Client
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -181,7 +182,7 @@ def _load_topic_cache(
         # Bulk-load all Q&A pairs for the found highlights
         qa_rows = (
             supabase.table("qa_pairs")
-            .select("highlight_id,question,answer")
+            .select("highlight_id,question,answer,user_answer")
             .in_("highlight_id", highlight_ids)
             .execute()
         )
@@ -194,11 +195,12 @@ def _load_topic_cache(
             qa: list[dict] = []
             for h in highlights:
                 for qa_row in qa_by_highlight.get(h["id"], []):
+                    display_answer = qa_row["user_answer"] if qa_row.get("user_answer") else qa_row["answer"]
                     qa.append(
                         {
                             "span": h["span"],
                             "question": qa_row["question"],
-                            "answer": qa_row["answer"],
+                            "answer": display_answer,
                         }
                     )
             result[topic_lower] = {"spans": spans, "qa": qa}
@@ -485,3 +487,81 @@ async def documents(topic: list[str] = Query(default=[])):
         )
 
     return {"documents": items}
+
+
+class GoldenRecord(BaseModel):
+    query: str
+    context: str
+    answer: str
+    doc_id: str
+
+
+@app.post("/save-golden")
+async def save_golden(records: list[GoldenRecord]):
+    """Persist user-approved Q&A pairs into the golden_dataset table."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return {"saved": 0, "total": len(records), "error": "Supabase not configured"}
+    saved = 0
+    for rec in records:
+        try:
+            source_doc_id = _get_doc_uuid(rec.doc_id)
+            supabase.table("golden_dataset").upsert(
+                {
+                    "query": rec.query,
+                    "context": rec.context,
+                    "answer": rec.answer,
+                    "source_doc_id": source_doc_id,
+                },
+                on_conflict="query,context",
+            ).execute()
+            saved += 1
+        except Exception as exc:
+            log.warning("Failed to save golden record query=%r: %s", rec.query, exc)
+    log.info("Saved %d/%d records to golden_dataset", saved, len(records))
+    return {"saved": saved, "total": len(records)}
+
+
+class UpdateAnswerRequest(BaseModel):
+    doc_id: str
+    span: str
+    question: str
+    user_answer: str
+
+
+@app.post("/update-answer")
+async def update_answer(req: UpdateAnswerRequest):
+    """Persist a reviewer-edited answer into qa_pairs.user_answer."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return {"status": "skipped", "error": "Supabase not configured"}
+    try:
+        db_doc_id = _get_doc_uuid(req.doc_id)
+        if not db_doc_id:
+            raise HTTPException(status_code=404, detail=f"Document not found: {req.doc_id}")
+
+        h_row = (
+            supabase.table("highlights")
+            .select("id")
+            .eq("document_id", db_doc_id)
+            .eq("span", req.span)
+            .limit(1)
+            .execute()
+        )
+        if not h_row.data:
+            raise HTTPException(status_code=404, detail="Highlight not found")
+        highlight_id = h_row.data[0]["id"]
+
+        supabase.table("qa_pairs").update(
+            {"user_answer": req.user_answer}
+        ).eq("highlight_id", highlight_id).eq("question", req.question).execute()
+
+        # Invalidate in-memory cache so the next query re-fetches from Supabase
+        # and returns the updated user_answer instead of the old AI answer
+        _combined_cache.clear()
+
+        log.debug("Updated user_answer doc=%s span=%r", req.doc_id, req.span)
+        return {"status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("update_answer failed for doc=%s: %s", req.doc_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))

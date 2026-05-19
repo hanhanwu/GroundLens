@@ -26,6 +26,7 @@ type ApprovedRecord = {
   query: string;
   context: string;
   answer: string;
+  docId: string;
 };
 
 type KnowledgeDocument = {
@@ -279,7 +280,7 @@ function DocumentCard({
               <Pressable
                 onPress={() =>
                   onApprove(
-                    { topic: qaQuery, query: matchingQA.question, context: matchingQA.span, answer: matchingQA.answer },
+                    { topic: qaQuery, query: matchingQA.question, context: matchingQA.span, answer: matchingQA.answer, docId: doc.id },
                     qaKey
                   )
                 }
@@ -489,6 +490,8 @@ export default function App() {
   const [approvedRecords, setApprovedRecords] = useState<ApprovedRecord[]>([]);
   const [approvedKeys, setApprovedKeys] = useState<Set<string>>(new Set());
   const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
+  const [editedAnswer, setEditedAnswer] = useState('');
+  const [isEditingAnswer, setIsEditingAnswer] = useState(false);
   // Maps each topic to a stable color index based on insertion order, unaffected by drag-reorder
   const [topicColorMap, setTopicColorMap] = useState<Record<string, number>>({});
 
@@ -503,6 +506,7 @@ export default function App() {
       op: new Animated.Value(0),
     }))
   ).current;
+  const goldenSavedRef = useRef(false);
   const topicInputRef = useRef<TextInput>(null);
   const draggingIndexRef = useRef<number | null>(null);
   const dropTargetRef = useRef<number | null>(null);
@@ -571,6 +575,34 @@ export default function App() {
       }),
     ]).start();
   }, [currentReviewIndex, documents, submittedTopics, isLoading, error]);
+
+  // Save approved records to golden_dataset once all reviews are done (fires once per session)
+  useEffect(() => {
+    if (isLoading || !!error || documents.length === 0 || submittedTopics.length === 0) return;
+    let total = 0;
+    for (const topic of submittedTopics) {
+      for (const doc of documents) {
+        const spans = doc.topicSpans[topic] ?? [];
+        const hasQA = (doc.qaPairs ?? []).some((qa) => spans.includes(qa.span));
+        if (hasQA) total++;
+      }
+    }
+    if (total === 0 || currentReviewIndex < total) return;
+    if (goldenSavedRef.current || approvedRecords.length === 0) return;
+    goldenSavedRef.current = true;
+    fetch(`${BACKEND_URL}/save-golden`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        approvedRecords.map((r) => ({
+          query: r.query,
+          context: r.context,
+          answer: r.answer,
+          doc_id: r.docId,
+        }))
+      ),
+    }).catch((err) => console.warn('Failed to save golden dataset:', err));
+  }, [currentReviewIndex, documents, submittedTopics, isLoading, error, approvedRecords]);
 
   function startDrag(i: number, startX: number, startY: number) {
     let dragStarted = false;
@@ -645,6 +677,9 @@ export default function App() {
     setDocuments([]);
     setError('');
     setCurrentReviewIndex(0);
+    setEditedAnswer('');
+    setIsEditingAnswer(false);
+    goldenSavedRef.current = false;
   }
 
   function handleApprove(record: ApprovedRecord, key: string) {
@@ -654,10 +689,14 @@ export default function App() {
       return [...prev, record];
     });
     setCurrentReviewIndex((i) => i + 1);
+    setEditedAnswer('');
+    setIsEditingAnswer(false);
   }
 
   function handleSkip() {
     setCurrentReviewIndex((i) => i + 1);
+    setEditedAnswer('');
+    setIsEditingAnswer(false);
   }
 
   function openApprovedTable() {
@@ -1077,26 +1116,67 @@ export default function App() {
                     <Text style={{ fontWeight: 'bold' }}>Q: </Text>
                     {currentItem.qaPair.question}
                   </Text>
-                  <Text style={styles.qaReviewAnswer}>
-                    <Text style={{ fontWeight: 'bold' }}>A: </Text>
-                    {currentItem.qaPair.answer}
-                  </Text>
+                  <Text style={styles.qaReviewAnswer}>A:</Text>
+                  {isEditingAnswer ? (
+                    <>
+                      <TextInput
+                        style={styles.answerEditInput}
+                        value={editedAnswer}
+                        onChangeText={setEditedAnswer}
+                        multiline
+                        scrollEnabled={false}
+                        autoFocus
+                      />
+                      <Pressable onPress={() => setIsEditingAnswer(false)} style={styles.doneEditButton}>
+                        <Text style={styles.doneEditButtonText}>Done</Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.answerDisplayText}>
+                        {editedAnswer || currentItem.qaPair.answer}
+                      </Text>
+                      <Pressable
+                        onPress={() => {
+                          if (!editedAnswer) setEditedAnswer(currentItem.qaPair.answer);
+                          setIsEditingAnswer(true);
+                        }}
+                        style={styles.editAnswerButton}
+                      >
+                        <Text style={styles.editAnswerButtonText}>Edit</Text>
+                      </Pressable>
+                    </>
+                  )}
                   <View style={styles.qaReviewButtons}>
                     <Pressable onPress={handleSkip} style={styles.skipButton}>
                       <Text style={styles.skipButtonText}>Skip</Text>
                     </Pressable>
                     <Pressable
-                      onPress={() =>
+                      onPress={() => {
+                        const finalAnswer = editedAnswer.trim() || currentItem.qaPair.answer;
                         handleApprove(
                           {
                             topic: currentItem.topic,
                             query: currentItem.qaPair.question,
                             context: currentItem.qaPair.span,
-                            answer: currentItem.qaPair.answer,
+                            answer: finalAnswer,
+                            docId: currentItem.doc.id,
                           },
                           `${currentItem.doc.id}-${currentItem.qaPair.span}`
-                        )
-                      }
+                        );
+                        if (editedAnswer.trim() && editedAnswer.trim() !== currentItem.qaPair.answer) {
+                          fetch(`${BACKEND_URL}/update-answer`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              doc_id: currentItem.doc.id,
+                              span: currentItem.qaPair.span,
+                              question: currentItem.qaPair.question,
+                              user_answer: editedAnswer.trim(),
+                            }),
+                          }).catch((err) => console.warn('Failed to update answer:', err));
+                        }
+                      }}
                       style={[styles.qaApproveButton, { backgroundColor: currentItem.palette.border }]}
                     >
                       <Text style={styles.qaApproveButtonText}>Approve</Text>
@@ -1780,8 +1860,53 @@ const styles = StyleSheet.create({
   qaReviewAnswer: {
     color: '#374151',
     fontSize: 13,
+    fontWeight: 'bold',
+    lineHeight: 19,
+  },
+  editAnswerButton: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#C8C8C8',
+    borderRadius: 4,
+    marginBottom: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  editAnswerButtonText: {
+    color: '#374151',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  answerDisplayText: {
+    color: '#374151',
+    fontSize: 13,
     lineHeight: 19,
     marginBottom: 14,
+  },
+  doneEditButton: {
+    alignSelf: 'flex-end',
+    borderColor: '#ced4da',
+    borderRadius: 6,
+    borderWidth: 1,
+    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  doneEditButtonText: {
+    color: '#526071',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  answerEditInput: {
+    backgroundColor: '#ffffff',
+    borderColor: '#d1d5db',
+    borderRadius: 6,
+    borderWidth: 1,
+    color: '#374151',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 8,
+    minHeight: 60,
+    padding: 8,
   },
   qaReviewButtons: {
     flexDirection: 'row',
