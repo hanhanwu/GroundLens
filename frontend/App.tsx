@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   ActivityIndicator,
+  Easing,
   Image,
   Platform,
   Pressable,
@@ -123,6 +124,18 @@ function BrandLogo() {
     </View>
   );
 }
+
+// Fireworks burst particles for the completion celebration
+const FIREWORK_PARTICLES = [
+  { emoji: '🎉', tx: -180, ty: -280, delay: 0 },
+  { emoji: '🥳', tx: -100, ty: -320, delay: 50 },
+  { emoji: '💯', tx:  -10, ty: -340, delay: 20 },
+  { emoji: '🎊', tx:   80, ty: -325, delay: 70 },
+  { emoji: '👏', tx:  165, ty: -285, delay: 30 },
+  { emoji: '🍾', tx: -145, ty: -250, delay: 100 },
+  { emoji: '✨', tx:   20, ty: -260, delay: 45 },
+  { emoji: '🏆', tx:  120, ty: -245, delay: 85 },
+] as const;
 
 const TOPIC_COLORS: { bg: string; border: string; text: string }[] = [
   { bg: '#FEF9C3', border: '#EAB308', text: '#78350F' }, // vivid yellow
@@ -465,6 +478,16 @@ export default function App() {
   const [topicColorMap, setTopicColorMap] = useState<Record<string, number>>({});
 
   const arrowAnim = useRef(new Animated.Value(0)).current;
+  const progressBarAnim = useRef(new Animated.Value(0)).current;
+  const celebScale = useRef(new Animated.Value(0.6)).current;
+  const celebOpacity = useRef(new Animated.Value(0)).current;
+  const confettiRefs = useRef(
+    FIREWORK_PARTICLES.map(() => ({
+      y: new Animated.Value(0),
+      x: new Animated.Value(0),
+      op: new Animated.Value(0),
+    }))
+  ).current;
   const topicInputRef = useRef<TextInput>(null);
   const draggingIndexRef = useRef<number | null>(null);
   const dropTargetRef = useRef<number | null>(null);
@@ -482,6 +505,54 @@ export default function App() {
     animation.start();
     return () => animation.stop();
   }, [arrowAnim]);
+
+  // Animate progress bar fill whenever the review index advances
+  useEffect(() => {
+    Animated.timing(progressBarAnim, {
+      toValue: currentReviewIndex + 1,
+      duration: 350,
+      useNativeDriver: false,
+    }).start();
+  }, [currentReviewIndex]);
+
+  // Celebration animation — re-derive "done" from state to avoid referencing reviewItems (declared after hooks)
+  useEffect(() => {
+    if (isLoading || !!error || documents.length === 0 || submittedTopics.length === 0) return;
+    let total = 0;
+    for (const topic of submittedTopics) {
+      for (const doc of documents) {
+        const spans = doc.topicSpans[topic] ?? [];
+        const hasQA = (doc.qaPairs ?? []).some((qa) => spans.includes(qa.span));
+        if (hasQA) total++;
+      }
+    }
+    if (total === 0 || currentReviewIndex < total) return;
+    celebScale.setValue(0.6);
+    celebOpacity.setValue(0);
+    confettiRefs.forEach((r) => { r.y.setValue(0); r.x.setValue(0); r.op.setValue(0); });
+    Animated.parallel([
+      Animated.spring(celebScale, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }),
+      Animated.timing(celebOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
+      ...confettiRefs.map((r, i) => {
+        const cfg = FIREWORK_PARTICLES[i];
+        return Animated.sequence([
+          Animated.delay(cfg.delay),
+          // Phase 1 — quick upward launch from center
+          Animated.parallel([
+            Animated.timing(r.op, { toValue: 1, duration: 80, useNativeDriver: true }),
+            Animated.timing(r.y, { toValue: -120, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          ]),
+          // Phase 2 — burst outward to final position
+          Animated.parallel([
+            Animated.timing(r.y, { toValue: cfg.ty, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+            Animated.timing(r.x, { toValue: cfg.tx, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+          ]),
+          // Phase 3 — fade out
+          Animated.timing(r.op, { toValue: 0, duration: 500, useNativeDriver: true }),
+        ]);
+      }),
+    ]).start();
+  }, [currentReviewIndex, documents, submittedTopics, isLoading, error]);
 
   function startDrag(i: number, startX: number, startY: number) {
     let dragStarted = false;
@@ -864,6 +935,28 @@ export default function App() {
             );
           })}
         </View>
+        {/* Progress bar — shown while reviewing */}
+        {!isLoading && !allReviewDone && reviewItems.length > 0 && currentItem && (
+          <View style={styles.reviewProgressBarRow}>
+            <View style={styles.reviewProgressBarTrack}>
+              <Animated.View
+                style={[
+                  styles.reviewProgressBarFill,
+                  {
+                    width: progressBarAnim.interpolate({
+                      inputRange: [0, reviewItems.length],
+                      outputRange: ['0%', '100%'],
+                      extrapolate: 'clamp',
+                    }),
+                  },
+                ]}
+              />
+            </View>
+            <Text style={styles.reviewProgressBarLabel}>
+              {currentReviewIndex + 1} / {reviewItems.length}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Body */}
@@ -889,17 +982,39 @@ export default function App() {
         </View>
       ) : allReviewDone ? (
         <View style={styles.completionScreen}>
-          <Text style={styles.completionTitle}>All done!</Text>
-          <Text style={styles.completionSubtitle}>
+          {/* Fireworks burst particles */}
+          {FIREWORK_PARTICLES.map((cfg, i) => (
+            <Animated.Text
+              key={`fw-${i}`}
+              style={[
+                styles.confettiEmoji,
+                {
+                  opacity: confettiRefs[i].op,
+                  transform: [
+                    { translateY: confettiRefs[i].y },
+                    { translateX: confettiRefs[i].x },
+                  ],
+                },
+              ]}
+            >
+              {cfg.emoji}
+            </Animated.Text>
+          ))}
+          <Animated.Text style={[styles.completionTitle, { transform: [{ scale: celebScale }], opacity: celebOpacity }]}>
+            All done!
+          </Animated.Text>
+          <Animated.Text style={[styles.completionSubtitle, { opacity: celebOpacity }]}>
             {approvedRecords.length} Q&A pair{approvedRecords.length !== 1 ? 's' : ''} approved
-          </Text>
-          <Pressable
-            onPress={openApprovedTable}
-            disabled={approvedRecords.length === 0}
-            style={[styles.confirmButton, approvedRecords.length === 0 && styles.confirmButtonDisabled]}
-          >
-            <Text style={styles.confirmButtonText}>View Dataset →</Text>
-          </Pressable>
+          </Animated.Text>
+          <Animated.View style={{ opacity: celebOpacity }}>
+            <Pressable
+              onPress={openApprovedTable}
+              disabled={approvedRecords.length === 0}
+              style={[styles.confirmButton, approvedRecords.length === 0 && styles.confirmButtonDisabled]}
+            >
+              <Text style={styles.confirmButtonText}>View Dataset →</Text>
+            </Pressable>
+          </Animated.View>
         </View>
       ) : currentItem ? (
         <ScrollView style={styles.reviewScroll} contentContainerStyle={styles.reviewScrollContent}>
@@ -1704,5 +1819,36 @@ const styles = StyleSheet.create({
     color: '#526071',
     fontSize: 16,
     marginBottom: 8,
+  },
+  reviewProgressBarRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    paddingBottom: 10,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+  },
+  reviewProgressBarTrack: {
+    backgroundColor: '#E8ECF0',
+    borderRadius: 4,
+    flex: 1,
+    height: 6,
+    overflow: 'hidden',
+  },
+  reviewProgressBarFill: {
+    backgroundColor: '#C8A82C',
+    borderRadius: 4,
+    height: 6,
+  },
+  reviewProgressBarLabel: {
+    color: '#526071',
+    fontSize: 12,
+    fontWeight: '700',
+    minWidth: 36,
+    textAlign: 'right',
+  },
+  confettiEmoji: {
+    fontSize: 36,
+    position: 'absolute',
   },
 });
