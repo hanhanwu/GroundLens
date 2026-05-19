@@ -14,6 +14,8 @@ create table documents (
 );
 
 -- Text highlights: one row per (document, topic, span)
+-- NOTE: `topic` is stored lowercase by the backend for case-insensitive matching.
+--       Always query with lower(topic) or pass already-lowercased values.
 create table highlights (
   id           uuid primary key default gen_random_uuid(),
   document_id  uuid references documents(id) on delete cascade,
