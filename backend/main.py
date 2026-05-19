@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 
 import httpx
@@ -498,27 +499,32 @@ class GoldenRecord(BaseModel):
 
 @app.post("/save-golden")
 async def save_golden(records: list[GoldenRecord]):
-    """Persist user-approved Q&A pairs into the golden_dataset table."""
+    """Persist user-approved Q&A pairs into the golden_dataset table.
+
+    Each call generates a shared batch_id so all records from the same
+    approval session can be grouped and queried together.
+    """
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         return {"saved": 0, "total": len(records), "error": "Supabase not configured"}
+    batch_id = str(uuid.uuid4())
     saved = 0
     for rec in records:
         try:
             source_doc_id = _get_doc_uuid(rec.doc_id)
-            supabase.table("golden_dataset").upsert(
+            supabase.table("golden_dataset").insert(
                 {
+                    "batch_id": batch_id,
                     "query": rec.query,
                     "context": rec.context,
                     "answer": rec.answer,
                     "source_doc_id": source_doc_id,
-                },
-                on_conflict="query,context",
+                }
             ).execute()
             saved += 1
         except Exception as exc:
             log.warning("Failed to save golden record query=%r: %s", rec.query, exc)
-    log.info("Saved %d/%d records to golden_dataset", saved, len(records))
-    return {"saved": saved, "total": len(records)}
+    log.info("Saved %d/%d records to golden_dataset (batch=%s)", saved, len(records), batch_id)
+    return {"saved": saved, "total": len(records), "batch_id": batch_id}
 
 
 class UpdateAnswerRequest(BaseModel):

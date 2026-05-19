@@ -39,14 +39,18 @@ create table qa_pairs (
 
 -- Golden dataset (approved ApprovedRecords)
 create table golden_dataset (
-  id           uuid primary key default gen_random_uuid(),
-  query        text not null,
-  context      text not null,
-  answer       text not null,
+  id            uuid primary key default gen_random_uuid(),
+  batch_id      uuid not null,
+  query         text not null,
+  context       text not null,
+  answer        text not null,
   source_doc_id uuid references documents(id) on delete set null,
-  approved_at  timestamptz default now(),
-  unique (query, context)
+  approved_at   timestamptz default now()
 );
+
+-- Index for efficient batch retrieval
+create index on golden_dataset (batch_id);
+create index on golden_dataset (approved_at desc);
 
 create policy "allow all" on documents      for all using (true) with check (true);
 create policy "allow all" on highlights     for all using (true) with check (true);
