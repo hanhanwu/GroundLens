@@ -455,6 +455,11 @@ export default function App() {
 
   const arrowAnim = useRef(new Animated.Value(0)).current;
   const topicInputRef = useRef<TextInput>(null);
+  const draggingIndexRef = useRef<number | null>(null);
+  const dropTargetRef = useRef<number | null>(null);
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     const animation = Animated.loop(
@@ -466,6 +471,48 @@ export default function App() {
     animation.start();
     return () => animation.stop();
   }, [arrowAnim]);
+
+  function startDrag(i: number, startX: number, startY: number) {
+    let dragStarted = false;
+    function handleMouseMove(ev: MouseEvent) {
+      if (!dragStarted) {
+        if (Math.abs(ev.clientX - startX) > 4 || Math.abs(ev.clientY - startY) > 4) {
+          dragStarted = true;
+          draggingIndexRef.current = i;
+          setDraggingIndex(i);
+          setMousePos({ x: ev.clientX, y: ev.clientY });
+          (document as any).body.style.cursor = 'grabbing';
+          (document as any).body.style.userSelect = 'none';
+        }
+      } else {
+        setMousePos({ x: ev.clientX, y: ev.clientY });
+      }
+    }
+    function handleMouseUp() {
+      if (dragStarted) {
+        const from = draggingIndexRef.current;
+        const to = dropTargetRef.current;
+        if (from !== null && to !== null && from !== to) {
+          setTaggedTopics(prev => {
+            const next = [...prev];
+            const [moved] = next.splice(from, 1);
+            next.splice(to, 0, moved);
+            return next;
+          });
+        }
+        (document as any).body.style.cursor = '';
+        (document as any).body.style.userSelect = '';
+      }
+      draggingIndexRef.current = null;
+      dropTargetRef.current = null;
+      setDraggingIndex(null);
+      setDragOverIndex(null);
+      (window as any).removeEventListener('mousemove', handleMouseMove);
+      (window as any).removeEventListener('mouseup', handleMouseUp);
+    }
+    (window as any).addEventListener('mousemove', handleMouseMove);
+    (window as any).addEventListener('mouseup', handleMouseUp);
+  }
 
   const canSubmit = taggedTopics.length > 0;
 
@@ -598,7 +645,7 @@ export default function App() {
           <View style={styles.uploadHero}>
             <Text style={styles.uploadHeroTitle}>Specify Your Topics</Text>
             <Text style={styles.uploadHeroSubtitle}>
-              Type a topic and press Enter or + to add it as a tag
+              Type a topic and press Enter or + to add it
             </Text>
           </View>
           <View style={styles.tagInputCard}>
@@ -622,17 +669,47 @@ export default function App() {
             </View>
             {taggedTopics.length > 0 && (
               <View style={styles.tagList}>
+                <View style={styles.prioritiesHeader}>
+                  <Text style={styles.prioritiesTitle}>Priorities</Text>
+                  <Text style={styles.dragHint}>drag to reorder</Text>
+                </View>
                 {taggedTopics.map((tag, i) => {
                   const palette = TOPIC_COLORS[i % TOPIC_COLORS.length];
+                  const isDragging = draggingIndex === i;
+                  const isDragOver = dragOverIndex === i && draggingIndex !== i;
                   return (
                     <View
                       key={`${tag}-${i}`}
-                      style={[styles.tagChip, { backgroundColor: palette.bg, borderColor: palette.border }]}
+                      style={[styles.tagRow, isDragging && styles.tagRowDragging, isDragOver && styles.tagRowDragOver]}
+                      // @ts-ignore
+                      onMouseDown={(e: any) => {
+                        const x = e.clientX ?? e.nativeEvent?.clientX ?? 0;
+                        const y = e.clientY ?? e.nativeEvent?.clientY ?? 0;
+                        startDrag(i, x, y);
+                      }}
+                      // @ts-ignore
+                      onMouseEnter={() => {
+                        if (draggingIndexRef.current !== null) {
+                          setDragOverIndex(i);
+                          dropTargetRef.current = i;
+                        }
+                      }}
+                      // @ts-ignore
+                      onMouseLeave={() => {
+                        if (dropTargetRef.current === i) {
+                          setDragOverIndex(null);
+                          dropTargetRef.current = null;
+                        }
+                      }}
                     >
-                      <Text style={[styles.tagChipText, { color: palette.text }]}>{tag}</Text>
-                      <Pressable onPress={() => removeTag(i)} style={styles.tagRemoveBtn}>
-                        <Text style={[styles.tagRemoveBtnText, { color: palette.text }]}>×</Text>
-                      </Pressable>
+                      <Text style={styles.dragHandleText}>⠿</Text>
+                      <Text style={styles.tagRowNumber}>{i + 1}</Text>
+                      <View style={[styles.tagChip, { backgroundColor: palette.bg, borderColor: palette.border, flex: 1 }]}>
+                        <Text style={[styles.tagChipText, { color: palette.text, flex: 1 }]}>{tag}</Text>
+                        <Pressable onPress={() => removeTag(i)} style={styles.tagRemoveBtn}>
+                          <Text style={[styles.tagRemoveBtnText, { color: palette.text }]}>×</Text>
+                        </Pressable>
+                      </View>
                     </View>
                   );
                 })}
@@ -649,6 +726,26 @@ export default function App() {
             </Pressable>
           </View>
         </ScrollView>
+        {draggingIndex !== null && taggedTopics[draggingIndex] !== undefined && (
+          <View
+            pointerEvents="none"
+            style={[styles.dragGhost, { left: mousePos.x + 14, top: mousePos.y - 14 }]}
+          >
+            <Text style={styles.dragHandleText}>⠿</Text>
+            <Text style={styles.tagRowNumber}>{draggingIndex + 1}</Text>
+            <View style={[
+              styles.tagChip,
+              {
+                backgroundColor: TOPIC_COLORS[draggingIndex % TOPIC_COLORS.length].bg,
+                borderColor: TOPIC_COLORS[draggingIndex % TOPIC_COLORS.length].border,
+              }
+            ]}>
+              <Text style={[styles.tagChipText, { color: TOPIC_COLORS[draggingIndex % TOPIC_COLORS.length].text }]}>
+                {taggedTopics[draggingIndex]}
+              </Text>
+            </View>
+          </View>
+        )}
       </SafeAreaView>
     );
   }
@@ -829,10 +926,70 @@ const styles = StyleSheet.create({
     lineHeight: 30,
   },
   tagList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    flexDirection: 'column',
+    gap: 4,
     marginTop: 16,
+  },
+  prioritiesHeader: {
+    alignItems: 'baseline',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  prioritiesTitle: {
+    color: '#172033',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dragHint: {
+    color: '#78818f',
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  tagRow: {
+    alignItems: 'center',
+    borderRadius: 8,
+    cursor: 'grab',
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  } as any,
+  tagRowDragging: {
+    opacity: 0.2,
+  },
+  tagRowDragOver: {
+    backgroundColor: '#FEF9C3',
+  },
+  dragHandle: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  dragHandleText: {
+    color: '#b0bac3',
+    fontSize: 18,
+    userSelect: 'none',
+  } as any,
+  dragGhost: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.22)',
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    position: 'fixed',
+    transform: [{ rotate: '2deg' }],
+    zIndex: 9999,
+  } as any,
+  tagRowNumber: {
+    color: '#526071',
+    fontSize: 14,
+    fontWeight: '700',
+    minWidth: 20,
+    textAlign: 'right',
   },
   tagChip: {
     alignItems: 'center',
