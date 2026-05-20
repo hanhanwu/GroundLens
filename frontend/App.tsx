@@ -534,6 +534,22 @@ export default function App() {
     }).start();
   }, [currentReviewIndex]);
 
+  // Initialise the editable answer field whenever the review card changes
+  useEffect(() => {
+    let idx = 0;
+    outer: for (const topic of submittedTopics) {
+      for (const doc of documents) {
+        const spans = doc.topicSpans[topic] ?? [];
+        const qa = (doc.qaPairs ?? []).find((q) => spans.includes(q.span));
+        if (qa) {
+          if (idx === currentReviewIndex) { setEditedAnswer(qa.answer); break outer; }
+          idx++;
+        }
+      }
+    }
+    setIsEditingAnswer(false);
+  }, [currentReviewIndex, documents, submittedTopics]);
+
   // Celebration animation — re-derive "done" from state to avoid referencing reviewItems (declared after hooks)
   useEffect(() => {
     if (isLoading || !!error || documents.length === 0 || submittedTopics.length === 0) return;
@@ -671,15 +687,16 @@ export default function App() {
   }
 
   function editTopics() {
+    // Open the topic editor prefilled with the most recently submitted topics
+    setTaggedTopics(submittedTopics);
     setSubmittedTopics([]);
-    setTaggedTopics([]);
     setTopicInput('');
-    setDocuments([]);
     setError('');
     setCurrentReviewIndex(0);
     setEditedAnswer('');
     setIsEditingAnswer(false);
     goldenSavedRef.current = false;
+    setTimeout(() => topicInputRef.current?.focus(), 0);
   }
 
   function handleApprove(record: ApprovedRecord, key: string) {
@@ -689,14 +706,10 @@ export default function App() {
       return [...prev, record];
     });
     setCurrentReviewIndex((i) => i + 1);
-    setEditedAnswer('');
-    setIsEditingAnswer(false);
   }
 
   function handleSkip() {
     setCurrentReviewIndex((i) => i + 1);
-    setEditedAnswer('');
-    setIsEditingAnswer(false);
   }
 
   function openApprovedTable() {
@@ -1104,9 +1117,6 @@ export default function App() {
                 </View>
                 <View style={[styles.inlineQADash, { borderColor: currentItem.palette.border }]} />
                 <View style={[styles.inlineQACard, { backgroundColor: currentItem.palette.bg, borderColor: currentItem.palette.border }]}>
-                  <Text style={[styles.qaReviewProgress, { color: currentItem.palette.text }]}>
-                    {currentReviewIndex + 1} / {reviewItems.length}
-                  </Text>
                   <View style={[styles.qaReviewTopicBadge, { borderColor: currentItem.palette.border }]}>
                     <Text style={[styles.qaReviewTopicText, { color: currentItem.palette.text }]}>
                       {currentItem.topic}
@@ -1116,37 +1126,26 @@ export default function App() {
                     <Text style={{ fontWeight: 'bold' }}>Q: </Text>
                     {currentItem.qaPair.question}
                   </Text>
-                  <Text style={styles.qaReviewAnswer}>A:</Text>
-                  {isEditingAnswer ? (
-                    <>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <Text style={[styles.qaReviewAnswer, { marginRight: 8 }]}>A:</Text>
+                    {isEditingAnswer ? (
                       <TextInput
-                        style={styles.answerEditInput}
+                        style={[styles.answerEditInput, { flex: 1 }]}
                         value={editedAnswer}
                         onChangeText={setEditedAnswer}
                         multiline
                         scrollEnabled={false}
                         autoFocus
                       />
-                      <Pressable onPress={() => setIsEditingAnswer(false)} style={styles.doneEditButton}>
-                        <Text style={styles.doneEditButtonText}>Done</Text>
-                      </Pressable>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.answerDisplayText}>
-                        {editedAnswer || currentItem.qaPair.answer}
-                      </Text>
-                      <Pressable
-                        onPress={() => {
-                          if (!editedAnswer) setEditedAnswer(currentItem.qaPair.answer);
-                          setIsEditingAnswer(true);
-                        }}
-                        style={styles.editAnswerButton}
-                      >
-                        <Text style={styles.editAnswerButtonText}>Edit</Text>
-                      </Pressable>
-                    </>
-                  )}
+                    ) : (
+                      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-start' }}>
+                        <Text style={[styles.answerDisplayText, { marginBottom: 0, flex: 1 }]}>{editedAnswer}</Text>
+                        <Pressable onPress={() => setIsEditingAnswer(true)} style={[styles.editAnswerButton, { marginLeft: 8, alignSelf: 'flex-start' }]}> 
+                          <Text style={styles.editAnswerButtonText}>Edit</Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </View>
                   <View style={styles.qaReviewButtons}>
                     <Pressable onPress={handleSkip} style={styles.skipButton}>
                       <Text style={styles.skipButtonText}>Skip</Text>
@@ -1865,7 +1864,7 @@ const styles = StyleSheet.create({
   },
   editAnswerButton: {
     alignSelf: 'flex-end',
-    backgroundColor: '#C8C8C8',
+    backgroundColor: '#EBEAE6',
     borderRadius: 4,
     marginBottom: 14,
     paddingHorizontal: 10,
