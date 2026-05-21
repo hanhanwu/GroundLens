@@ -75,9 +75,12 @@ const stepBodyStarters = [
   'Review',
 ];
 
+const STEP_SECTION_RE = new RegExp(
+  `^((Step \\d+ \\| .*?))(${stepBodyStarters.join('|')})\\b(.*)$`
+);
+
 function splitStepSection(section: string): ContentBlock[] {
-  const starterPattern = stepBodyStarters.join('|');
-  const match = section.match(new RegExp(`^((Step \\d+ \\| .*?))(${starterPattern})\\b(.*)$`));
+  const match = section.match(STEP_SECTION_RE);
 
   if (!match) {
     return [{ kind: 'heading', text: section }];
@@ -213,89 +216,6 @@ function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[
         </Text>
       ))}
     </Text>
-  );
-}
-
-function DocumentCard({
-  doc,
-  matchedTopics,
-  approvedKeys,
-  onApprove,
-}: {
-  doc: KnowledgeDocument;
-  matchedTopics: ColoredTopic[];
-  approvedKeys: Set<string>;
-  onApprove: (record: ApprovedRecord, key: string) => void;
-}) {
-  const bodyBlocks = formatContent(getDocumentBody(doc.content));
-  const qaPairs = doc.qaPairs ?? [];
-
-  // Map each span to its topic's color palette
-  const spanToPalette: Record<string, { bg: string; border: string; text: string }> = {};
-  for (const { palette, spans } of matchedTopics) {
-    for (const span of spans) spanToPalette[span] = palette;
-  }
-
-  return (
-    <View style={styles.document}>
-      <Text style={styles.documentTitle}>
-        <HighlightedText text={doc.title} topics={matchedTopics} />
-      </Text>
-      {bodyBlocks.map((block, index) => {
-        const matchingQA = qaPairs.find((qa) => block.text.includes(qa.span));
-        const palette = matchingQA ? (spanToPalette[matchingQA.span] ?? null) : null;
-
-        if (!matchingQA || !palette) {
-          return (
-            <Text
-              key={`${doc.id}-b${index}`}
-              style={block.kind === 'heading' ? styles.sectionHeading : styles.paragraph}
-            >
-              <HighlightedText text={block.text} topics={matchedTopics} />
-            </Text>
-          );
-        }
-
-        const qaKey = `${doc.id}-${matchingQA.span}`;
-        const approved = approvedKeys.has(qaKey);
-        const qaQuery = matchedTopics.find((t) => t.spans.includes(matchingQA.span))?.text ?? '';
-
-        return (
-          <View key={`${doc.id}-b${index}`} style={styles.qaRow}>
-            <View style={styles.qaRowText}>
-              <Text style={[block.kind === 'heading' ? styles.sectionHeading : styles.paragraph, { marginBottom: 0, marginTop: 0 }]}>
-                <HighlightedText text={block.text} topics={matchedTopics} />
-              </Text>
-            </View>
-            <View style={[styles.qaDash, { borderColor: palette.border }]} />
-            <View style={[styles.qaCard, { backgroundColor: palette.bg, borderColor: palette.border }]}>
-              <Text style={[styles.qaQuestion, { color: palette.text }]}>
-                <Text style={{ fontWeight: 'bold' }}>Q:</Text>{' '}
-                {matchingQA.question}
-              </Text>
-              <Text style={styles.qaAnswer}>
-                <Text style={{ fontWeight: 'bold' }}>A:</Text>{' '}
-                {matchingQA.answer}
-              </Text>
-              <Pressable
-                onPress={() =>
-                  onApprove(
-                    { topic: qaQuery, query: matchingQA.question, context: matchingQA.span, answer: matchingQA.answer, docId: doc.id },
-                    qaKey
-                  )
-                }
-                disabled={approved}
-                style={approved ? styles.approveButtonApproved : [styles.approveButton, { backgroundColor: palette.border }]}
-              >
-                <Text style={approved ? styles.approveButtonApprovedText : [styles.approveButtonText, { color: palette.text }]}>
-                  {approved ? '✓ Approved' : 'Approve'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        );
-      })}
-    </View>
   );
 }
 
@@ -1181,11 +1101,6 @@ export default function App() {
                       <Text style={styles.qaApproveButtonText}>Approve</Text>
                     </Pressable>
                   </View>
-                  {approvedRecords.filter((r) => r.topic === currentItem.topic).length > 0 && (
-                    <Text style={styles.topicApprovedCount}>
-                      {approvedRecords.filter((r) => r.topic === currentItem.topic).length} approved for this topic
-                    </Text>
-                  )}
                 </View>
               </View>
             );
@@ -1214,14 +1129,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     paddingBottom: 14,
     paddingHorizontal: 20,
-    paddingTop: 14,
-  },
-  header: {
-    backgroundColor: '#FFFDF7',
-    borderBottomColor: '#F0E4A0',
-    borderBottomWidth: 1,
-    paddingHorizontal: 20,
-    paddingBottom: 18,
     paddingTop: 14,
   },
   brandRow: {
@@ -1324,11 +1231,6 @@ const styles = StyleSheet.create({
   tagRowDragOver: {
     backgroundColor: '#FEF9C3',
   },
-  dragHandle: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 2,
-  },
   dragHandleText: {
     color: '#b0bac3',
     fontSize: 18,
@@ -1404,29 +1306,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  selectedTopicsRow: {
-    flexDirection: 'column',
-    gap: 8,
-  },
-  selectedTopicsChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 8,
-  },
-  topicChip: {
-    backgroundColor: 'rgba(255, 140, 50, 0.07)',
-    borderColor: 'rgba(255, 140, 50, 0.35)',
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  topicChipText: {
-    color: '#172033',
-    fontSize: 15,
-    fontWeight: '600',
-  },
   editTopicsButton: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
@@ -1448,15 +1327,6 @@ const styles = StyleSheet.create({
     color: '#172033',
     fontSize: 15,
     fontWeight: '700',
-  },
-  selectedTopicLabel: {
-    color: '#526071',
-    fontSize: 13,
-    textTransform: 'uppercase',
-  },
-  content: {
-    padding: 20,
-    paddingBottom: 40,
   },
   centerState: {
     alignItems: 'center',
@@ -1826,19 +1696,6 @@ const styles = StyleSheet.create({
     flex: 2,
     padding: 12,
   },
-  qaReviewCard: {
-    borderRadius: 12,
-    borderStyle: 'dashed',
-    borderWidth: 1.5,
-    padding: 16,
-  },
-  qaReviewProgress: {
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 10,
-    opacity: 0.7,
-    textAlign: 'right',
-  },
   qaReviewTopicBadge: {
     alignSelf: 'flex-start',
     borderRadius: 12,
@@ -1880,20 +1737,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 14,
-  },
-  doneEditButton: {
-    alignSelf: 'flex-end',
-    borderColor: '#ced4da',
-    borderRadius: 6,
-    borderWidth: 1,
-    marginBottom: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  doneEditButtonText: {
-    color: '#526071',
-    fontSize: 12,
-    fontWeight: '600',
   },
   answerEditInput: {
     backgroundColor: '#ffffff',
@@ -1938,12 +1781,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
-  },
-  topicApprovedCount: {
-    color: '#526071',
-    fontSize: 12,
-    marginTop: 10,
-    textAlign: 'center',
   },
   completionScreen: {
     alignItems: 'center',

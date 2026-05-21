@@ -223,47 +223,56 @@ def _save_topic_cache(
     """Upsert newly generated spans and Q&A pairs into Supabase.
 
     Topics are stored lowercase so lookups are always case-insensitive.
+    Uses batch upserts (3 round-trips total) instead of one per row.
     """
     try:
+        highlight_rows = [
+            {"document_id": db_doc_id, "topic": topic.lower(), "span": span}
+            for topic, span_list in spans.items()
+            for span in span_list
+        ]
+        if not highlight_rows:
+            return
+
+        # Batch upsert all highlight rows
+        supabase.table("highlights").upsert(
+            highlight_rows, on_conflict="document_id,topic,span"
+        ).execute()
+
+        # Batch fetch IDs for all upserted highlights
+        h_result = (
+            supabase.table("highlights")
+            .select("id,topic,span")
+            .eq("document_id", db_doc_id)
+            .in_("span", [r["span"] for r in highlight_rows])
+            .execute()
+        )
+        span_topic_to_id: dict[tuple[str, str], str] = {
+            (r["span"], r["topic"]): r["id"] for r in h_result.data or []
+        }
+
+        # Build all Q&A rows referencing the resolved highlight IDs
+        qa_rows = []
         for topic, span_list in spans.items():
-            if not span_list:
-                continue
             topic_lower = topic.lower()
             for span in span_list:
-                # Upsert the highlight row
-                supabase.table("highlights").upsert(
-                    {"document_id": db_doc_id, "topic": topic_lower, "span": span},
-                    on_conflict="document_id,topic,span",
-                ).execute()
-
-                # Fetch its id (upsert doesn't reliably return it across all versions)
-                h_row = (
-                    supabase.table("highlights")
-                    .select("id")
-                    .eq("document_id", db_doc_id)
-                    .eq("topic", topic_lower)
-                    .eq("span", span)
-                    .limit(1)
-                    .execute()
-                )
-                if not h_row.data:
+                h_id = span_topic_to_id.get((span, topic_lower))
+                if not h_id:
                     log.warning("Could not find highlight after upsert: doc=%s topic=%s", db_doc_id, topic_lower)
                     continue
-                highlight_id = h_row.data[0]["id"]
-
-                # Upsert each Q&A pair that belongs to this span
                 for qa_item in qa:
-                    if qa_item["span"] != span:
-                        continue
-                    supabase.table("qa_pairs").upsert(
-                        {
+                    if qa_item["span"] == span:
+                        qa_rows.append({
                             "document_id": db_doc_id,
-                            "highlight_id": highlight_id,
+                            "highlight_id": h_id,
                             "question": qa_item["question"],
                             "answer": qa_item["answer"],
-                        },
-                        on_conflict="highlight_id,question",
-                    ).execute()
+                        })
+
+        if qa_rows:
+            supabase.table("qa_pairs").upsert(
+                qa_rows, on_conflict="highlight_id,question"
+            ).execute()
 
         log.debug("Saved to Supabase cache: doc=%s topics=%s", db_doc_id, list(spans.keys()))
     except Exception as exc:
