@@ -59,6 +59,21 @@ const BACKEND_URL =
 
 const logoSource = require('./assets/icon.png');
 
+function useBouncingArrow(toValue: number, useNativeDriver = true) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue, duration: 400, useNativeDriver }),
+        Animated.timing(anim, { toValue: 0, duration: 400, useNativeDriver }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, []);
+  return anim;
+}
+
 const sectionMarkers = [
   'Before you begin:',
   'Important:',
@@ -96,7 +111,7 @@ function formatContent(content: string): ContentBlock[] {
   let formatted = content.replace(/\s*(Step \d+ \|)/g, '\n\n$1');
 
   sectionMarkers.forEach((marker) => {
-    formatted = formatted.split(marker).join(`\n\n${marker}\n\n`);
+    formatted = formatted.replaceAll(marker, `\n\n${marker}\n\n`);
   });
 
   return formatted
@@ -219,12 +234,29 @@ function HighlightedText({ text, topics }: { text: string; topics: ColoredTopic[
   );
 }
 
+function ViewDatasetButton({ onPress, disabled }: { onPress: () => void; disabled: boolean }) {
+  const arrowAnim = useBouncingArrow(5);
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={[styles.nextButton, disabled && styles.nextButtonDisabled]}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Text style={[styles.nextButtonText, disabled && styles.nextButtonTextDisabled]}>View Dataset </Text>
+        <Animated.Text style={[styles.nextButtonText, disabled && styles.nextButtonTextDisabled, !disabled && { transform: [{ translateX: arrowAnim }] }]}>→</Animated.Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function UploadPage({ onNext }: { onNext: () => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'done'>('idle');
   const [uploadedCount, setUploadedCount] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const dropZoneRef = useRef<View>(null);
+  const rightArrowAnim = useBouncingArrow(5);
 
   // Refs so the one-time DOM listeners always see the freshest values
   const uploadStateRef = useRef(uploadState);
@@ -234,6 +266,7 @@ function UploadPage({ onNext }: { onNext: () => void }) {
   const isIdle = uploadState === 'idle';
   const isUploading = uploadState === 'uploading';
   const isDone = uploadState === 'done';
+
   const progressPct = files.length > 0 ? Math.round((uploadedCount / files.length) * 100) : 0;
 
   // Native DOM drag listeners — bypasses React Native Web's synthetic event limitations.
@@ -388,9 +421,10 @@ function UploadPage({ onNext }: { onNext: () => void }) {
               disabled={!isDone}
               style={[styles.nextButton, !isDone && styles.nextButtonDisabled]}
             >
-              <Text style={[styles.nextButtonText, !isDone && styles.nextButtonTextDisabled]}>
-                Specify Topics →
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={[styles.nextButtonText, !isDone && styles.nextButtonTextDisabled]}>Specify Topics </Text>
+                <Animated.Text style={[styles.nextButtonText, !isDone && styles.nextButtonTextDisabled, isDone && { transform: [{ translateX: rightArrowAnim }] }]}>→</Animated.Text>
+              </View>
             </Pressable>
           </View>
         </View>
@@ -415,7 +449,8 @@ export default function App() {
   // Maps each topic to a stable color index based on insertion order, unaffected by drag-reorder
   const [topicColorMap, setTopicColorMap] = useState<Record<string, number>>({});
 
-  const arrowAnim = useRef(new Animated.Value(0)).current;
+  const arrowAnim = useBouncingArrow(-5);
+  const rightArrowAnim = useBouncingArrow(5, false);
   const progressBarAnim = useRef(new Animated.Value(0)).current;
   const celebScale = useRef(new Animated.Value(0.6)).current;
   const celebOpacity = useRef(new Animated.Value(0)).current;
@@ -433,17 +468,6 @@ export default function App() {
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(arrowAnim, { toValue: -5, duration: 400, useNativeDriver: true }),
-        Animated.timing(arrowAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
-      ])
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [arrowAnim]);
 
   // Animate progress bar fill whenever the review index advances
   useEffect(() => {
@@ -672,8 +696,10 @@ export default function App() {
       '.btn-row{display:flex;justify-content:flex-end;margin-top:16px}' +
       '.dl-btn{background:#F7F192;border:1px solid #C8A82C;border-radius:8px;color:#111827;cursor:pointer;font-size:15px;font-weight:700;padding:10px 22px}' +
       '.dl-btn:hover{background:#f0e87a}' +
+      '@keyframes bounce-down{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}' +
+      '.dl-btn .arrow{display:inline-block;animation:bounce-down 0.8s ease-in-out infinite}' +
       '</style></head>' +
-      `<body><div class="topbar"><span class="brand">GroundLens</span></div><div class="container"><div class="page-title">Golden Dataset</div><div class="page-subtitle">${subtitle}</div><div class="card">${tableContent}</div><div class="btn-row"><button class="dl-btn" onclick="downloadCSV()">Download \u2193</button></div></div><script>function downloadCSV(){var rows=[["Topic","Query","Context","Answer"]];var trs=document.querySelectorAll("tbody tr");trs.forEach(function(tr){var tds=tr.querySelectorAll("td");var row=[];tds.forEach(function(td){row.push(\'"\'+td.innerText.replace(/"/g,\'""\')+\'"\')});rows.push(row)});var csv=rows.map(function(r){return r.join(",")}).join("\\n");var a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download="golden_dataset.csv";a.click()}<\/script></body></html>`;
+      `<body><div class="topbar"><span class="brand">GroundLens</span></div><div class="container"><div class="page-title">Golden Dataset</div><div class="page-subtitle">${subtitle}</div><div class="card">${tableContent}</div><div class="btn-row"><button class="dl-btn" onclick="downloadCSV()">Download <span class=\"arrow\">\u2193</span></button></div></div><script>function downloadCSV(){var rows=[["Topic","Query","Context","Answer"]];var trs=document.querySelectorAll("tbody tr");trs.forEach(function(tr){var tds=tr.querySelectorAll("td");var row=[];tds.forEach(function(td){row.push(\'"\'+td.innerText.replace(/"/g,\'""\')+\'"\')});rows.push(row)});var csv=rows.map(function(r){return r.join(",")}).join("\\n");var a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download="golden_dataset.csv";a.click()}<\/script></body></html>`;
     if (typeof window !== 'undefined') {
       const win = window.open('', '_blank');
       if (win) {
@@ -814,7 +840,10 @@ export default function App() {
               onPress={submitTopic}
               style={[styles.submitButton, !canSubmit && styles.submitButtonDisabled]}
             >
-              <Text style={[styles.submitButtonText, !canSubmit && { color: '#e5e7eb' }]}>Submit →</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={[styles.submitButtonText, !canSubmit && { color: '#e5e7eb' }]}>Submit </Text>
+                <Animated.Text style={[styles.submitButtonText, !canSubmit && { color: '#e5e7eb' }, canSubmit && { transform: [{ translateX: rightArrowAnim }] }]}>→</Animated.Text>
+              </View>
             </Pressable>
           </View>
         </ScrollView>
@@ -1000,13 +1029,7 @@ export default function App() {
             {approvedRecords.length} Q&A pair{approvedRecords.length !== 1 ? 's' : ''} approved
           </Animated.Text>
           <Animated.View style={{ opacity: celebOpacity }}>
-            <Pressable
-              onPress={openApprovedTable}
-              disabled={approvedRecords.length === 0}
-              style={[styles.confirmButton, approvedRecords.length === 0 && styles.confirmButtonDisabled]}
-            >
-              <Text style={styles.confirmButtonText}>View Dataset →</Text>
-            </Pressable>
+            <ViewDatasetButton onPress={openApprovedTable} disabled={approvedRecords.length === 0} />
           </Animated.View>
         </View>
       ) : currentItem ? (
@@ -1358,18 +1381,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
   },
-  document: {
-    backgroundColor: '#ffffff',
-    borderColor: '#e8e3c8',
-    borderRadius: 10,
-    borderWidth: 1,
-    elevation: 2,
-    padding: 20,
-    shadowColor: '#B8A030',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-  },
   documentTitle: {
     color: '#111827',
     fontSize: 24,
@@ -1390,91 +1401,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 25,
     marginBottom: 16,
-  },
-  qaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    gap: 0,
-  },
-  qaRowText: {
-    flex: 3,
-  },
-  qaDash: {
-    width: 16,
-    borderTopWidth: 1.5,
-    borderStyle: 'dashed',
-    alignSelf: 'center',
-  },
-  qaCard: {
-    flex: 2,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    padding: 10,
-  },
-  qaQuestion: {
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 17,
-    marginBottom: 4,
-  },
-  qaAnswer: {
-    color: '#374151',
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  approveButton: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#F7F192',
-    borderColor: '#C8A82C',
-    borderRadius: 6,
-    borderWidth: 1,
-    marginTop: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  approveButtonApproved: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#d1fae5',
-    borderRadius: 6,
-    marginTop: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  approveButtonText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  approveButtonApprovedText: {
-    color: '#065f46',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  confirmFooter: {
-    alignItems: 'flex-end',
-    backgroundColor: '#FFFDF7',
-    borderTopColor: '#F0E4A0',
-    borderTopWidth: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  confirmButton: {
-    backgroundColor: '#F7F192',
-    borderColor: '#C8A82C',
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 22,
-    paddingVertical: 10,
-  },
-  confirmButtonDisabled: {
-    backgroundColor: '#aeb8c6',
-  },
-  confirmButtonText: {
-    color: '#111827',
-    fontSize: 15,
-    fontWeight: '700',
   },
   // ── Upload page ──────────────────────────────────────────────
   dropZone: {

@@ -516,22 +516,24 @@ async def save_golden(records: list[GoldenRecord]):
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         return {"saved": 0, "total": len(records), "error": "Supabase not configured"}
     batch_id = str(uuid.uuid4())
-    saved = 0
+    rows = []
     for rec in records:
-        try:
-            source_doc_id = _get_doc_uuid(rec.doc_id)
-            supabase.table("golden_dataset").insert(
-                {
-                    "batch_id": batch_id,
-                    "query": rec.query,
-                    "context": rec.context,
-                    "answer": rec.answer,
-                    "source_doc_id": source_doc_id,
-                }
-            ).execute()
-            saved += 1
-        except Exception as exc:
-            log.warning("Failed to save golden record query=%r: %s", rec.query, exc)
+        source_doc_id = _get_doc_uuid(rec.doc_id)
+        rows.append(
+            {
+                "batch_id": batch_id,
+                "query": rec.query,
+                "context": rec.context,
+                "answer": rec.answer,
+                "source_doc_id": source_doc_id,
+            }
+        )
+    try:
+        supabase.table("golden_dataset").insert(rows).execute()
+        saved = len(rows)
+    except Exception as exc:
+        log.warning("Failed to save golden batch batch=%s: %s", batch_id, exc)
+        saved = 0
     log.info("Saved %d/%d records to golden_dataset (batch=%s)", saved, len(records), batch_id)
     return {"saved": saved, "total": len(records), "batch_id": batch_id}
 
