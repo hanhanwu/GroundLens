@@ -669,8 +669,11 @@ export default function App() {
       'tbody tr:last-child td{border-bottom:none}' +
       '.badge{display:inline-block;background:#FEF9C3;border:1px solid #EAB308;color:#78350F;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}' +
       '.empty{text-align:center;padding:56px 24px;color:#526071;font-size:15px}' +
+      '.btn-row{display:flex;justify-content:flex-end;margin-top:16px}' +
+      '.dl-btn{background:#F7F192;border:1px solid #C8A82C;border-radius:8px;color:#111827;cursor:pointer;font-size:15px;font-weight:700;padding:10px 22px}' +
+      '.dl-btn:hover{background:#f0e87a}' +
       '</style></head>' +
-      `<body><div class="topbar"><span class="brand">GroundLens</span></div><div class="container"><div class="page-title">Golden Dataset</div><div class="page-subtitle">${subtitle}</div><div class="card">${tableContent}</div></div></body></html>`;
+      `<body><div class="topbar"><span class="brand">GroundLens</span></div><div class="container"><div class="page-title">Golden Dataset</div><div class="page-subtitle">${subtitle}</div><div class="card">${tableContent}</div><div class="btn-row"><button class="dl-btn" onclick="downloadCSV()">Download \u2193</button></div></div><script>function downloadCSV(){var rows=[["Topic","Query","Context","Answer"]];var trs=document.querySelectorAll("tbody tr");trs.forEach(function(tr){var tds=tr.querySelectorAll("td");var row=[];tds.forEach(function(td){row.push(\'"\'+td.innerText.replace(/"/g,\'""\')+\'"\')});rows.push(row)});var csv=rows.map(function(r){return r.join(",")}).join("\\n");var a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download="golden_dataset.csv";a.click()}<\/script></body></html>`;
     if (typeof window !== 'undefined') {
       const win = window.open('', '_blank');
       if (win) {
