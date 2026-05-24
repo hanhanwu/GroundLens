@@ -40,7 +40,6 @@ create table qa_pairs (
 -- Golden dataset (approved ApprovedRecords)
 create table golden_dataset (
   id            uuid primary key default gen_random_uuid(),
-  batch_id      uuid not null,
   query         text not null,
   context       text not null,
   answer        text not null,
@@ -48,9 +47,23 @@ create table golden_dataset (
   approved_at   timestamptz default now()
 );
 
--- Index for efficient batch retrieval
-create index on golden_dataset (batch_id);
 create index on golden_dataset (approved_at desc);
+
+-- RPC: atomically replace all golden dataset rows in one round-trip
+create or replace function replace_golden_dataset(rows jsonb)
+returns int language plpgsql as $$
+begin
+  truncate golden_dataset;
+  insert into golden_dataset (query, context, answer, source_doc_id)
+  select
+    r->>'query',
+    r->>'context',
+    r->>'answer',
+    nullif(r->>'source_doc_id', '')::uuid
+  from jsonb_array_elements(rows) r;
+  return (select count(*) from golden_dataset);
+end;
+$$;
 
 create policy "allow all" on documents      for all using (true) with check (true);
 create policy "allow all" on highlights     for all using (true) with check (true);

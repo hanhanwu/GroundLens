@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import uuid
 from pathlib import Path
 
 import httpx
@@ -508,34 +507,26 @@ class GoldenRecord(BaseModel):
 
 @app.post("/save-golden")
 async def save_golden(records: list[GoldenRecord]):
-    """Persist user-approved Q&A pairs into the golden_dataset table.
-
-    Each call generates a shared batch_id so all records from the same
-    approval session can be grouped and queried together.
-    """
+    """Atomically replace the golden dataset via a single Postgres RPC call."""
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         return {"saved": 0, "total": len(records), "error": "Supabase not configured"}
-    batch_id = str(uuid.uuid4())
-    rows = []
-    for rec in records:
-        source_doc_id = _get_doc_uuid(rec.doc_id)
-        rows.append(
-            {
-                "batch_id": batch_id,
-                "query": rec.query,
-                "context": rec.context,
-                "answer": rec.answer,
-                "source_doc_id": source_doc_id,
-            }
-        )
+    rows = [
+        {
+            "query": rec.query,
+            "context": rec.context,
+            "answer": rec.answer,
+            "source_doc_id": _get_doc_uuid(rec.doc_id) or "",
+        }
+        for rec in records
+    ]
     try:
-        supabase.table("golden_dataset").insert(rows).execute()
-        saved = len(rows)
+        result = supabase.rpc("replace_golden_dataset", {"rows": rows}).execute()
+        saved = result.data if isinstance(result.data, int) else len(rows)
     except Exception as exc:
-        log.warning("Failed to save golden batch batch=%s: %s", batch_id, exc)
+        log.warning("Failed to save golden dataset: %s", exc)
         saved = 0
-    log.info("Saved %d/%d records to golden_dataset (batch=%s)", saved, len(records), batch_id)
-    return {"saved": saved, "total": len(records), "batch_id": batch_id}
+    log.info("Saved %d/%d records to golden_dataset", saved, len(records))
+    return {"saved": saved, "total": len(records)}
 
 
 class UpdateAnswerRequest(BaseModel):
